@@ -37,12 +37,25 @@
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
-                <Border
-                    Padding="16"
-                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
-                    BorderThickness="1"
-                    CornerRadius="8">
+                <StackPanel Spacing="8">
+                    <Grid>
+                        <TextBlock
+                            VerticalAlignment="Center"
+                            Style="{StaticResource CaptionTextBlockStyle}"
+                            Text="状态" />
+                        <HyperlinkButton
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Center"
+                            Padding="0"
+                            Click="OnRefresh"
+                            Content="刷新" />
+                    </Grid>
+                    <Border
+                        Padding="16"
+                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="8">
                     <Grid
                         MinHeight="136"
                         ColumnSpacing="16"
@@ -104,6 +117,7 @@
                             TextWrapping="Wrap" />
                     </Grid>
                 </Border>
+                </StackPanel>
 
                 <StackPanel Grid.Row="1" Spacing="16">
                     <ContentControl
@@ -191,11 +205,6 @@
                             <Button Grid.Column="1" HorizontalAlignment="Stretch" Click="OnRemoveTask" Content="删除任务" />
                         </Grid>
                     </StackPanel>
-
-                    <HyperlinkButton
-                        HorizontalAlignment="Left"
-                        Click="OnRefresh"
-                        Content="刷新状态" />
                 </StackPanel>
             </Grid>
         </ScrollViewer>
