@@ -12,8 +12,13 @@ namespace MihomoTray;
 public sealed partial class MainWindow : Window
 {
     private const double MinWindowWidthDip = 400;
+    private const int UnfocusedCloseSeconds = 600;
 
     private readonly MihomoApiMonitor _apiMonitor;
+    private readonly DispatcherTimer _unfocusedCloseTimer = new()
+    {
+        Interval = TimeSpan.FromSeconds(UnfocusedCloseSeconds)
+    };
     private bool _adjustingSize;
     private bool _sizeInitialized;
     private int _minClientHeight;
@@ -38,11 +43,35 @@ public sealed partial class MainWindow : Window
         MihomoService.SetActiveKernelPath(GetDisplayedKernelPath());
         WebUiButton.IsEnabled = false;
         _apiMonitor = new MihomoApiMonitor(OnApiLiveChanged);
-        Closed += (_, _) => _apiMonitor.Stop();
+        _unfocusedCloseTimer.Tick += OnUnfocusedCloseTick;
+        Activated += OnWindowActivated;
+        Closed += (_, _) =>
+        {
+            _unfocusedCloseTimer.Stop();
+            _apiMonitor.Stop();
+        };
 
         ApplyDefaultClientSize();
         FrameworkElement root = (FrameworkElement)Content;
         root.Loaded += OnRootLoaded;
+    }
+
+    private void OnWindowActivated(object sender, WindowActivatedEventArgs e)
+    {
+        if (e.WindowActivationState == WindowActivationState.Deactivated)
+        {
+            _unfocusedCloseTimer.Stop();
+            _unfocusedCloseTimer.Start();
+            return;
+        }
+
+        _unfocusedCloseTimer.Stop();
+    }
+
+    private void OnUnfocusedCloseTick(object? sender, object e)
+    {
+        _unfocusedCloseTimer.Stop();
+        Close();
     }
 
     private async void OnRootLoaded(object sender, RoutedEventArgs e)

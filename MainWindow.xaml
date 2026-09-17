@@ -23,7 +23,8 @@
         <ScrollViewer
             x:Name="ContentScroll"
             Grid.Row="1"
-            HorizontalAlignment="Stretch"
+            MaxWidth="900"
+            HorizontalAlignment="Center"
             VerticalAlignment="Stretch"
             HorizontalScrollBarVisibility="Disabled"
             VerticalScrollBarVisibility="Auto">

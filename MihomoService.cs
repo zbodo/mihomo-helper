@@ -32,6 +32,7 @@ internal static class MihomoService
 
     private const int DefaultControllerPort = 9090;
     private const int DefaultMixedPort = 7890;
+    private const string DefaultExternalUi = "ui";
     private const string DefaultTaskName = "mihomo";
     private const string KernelArgs = "-d .\\ -f config.yaml";
     private const string RegistryPath = @"Software\Microsoft\Windows\CurrentVersion\Internet Settings";
@@ -250,7 +251,7 @@ internal static class MihomoService
             }
 
             string url = "http://127.0.0.1:" + cfg.ControllerPort +
-                "/ui/#/setup?hostname=127.0.0.1&port=" + cfg.ControllerPort +
+                cfg.WebUiPath + "#/setup?hostname=127.0.0.1&port=" + cfg.ControllerPort +
                 "&secret=" + Uri.EscapeDataString(cfg.Secret);
             NativeMethods.ShellExecute(IntPtr.Zero, "open", url, null, null, NativeMethods.SwShowNoActivate);
             return true;
@@ -288,7 +289,7 @@ internal static class MihomoService
             using CancellationTokenSource cts = new(TimeSpan.FromSeconds(1));
             using HttpRequestMessage request = new(
                 HttpMethod.Get,
-                "http://127.0.0.1:" + cfg.ControllerPort + "/ui/");
+                "http://127.0.0.1:" + cfg.ControllerPort + cfg.WebUiPath);
             using HttpResponseMessage response = Http.Send(request, cts.Token);
             int code = (int)response.StatusCode;
             return code is >= 200 and < 400;
@@ -1123,8 +1124,10 @@ internal static class MihomoService
         public string Secret { get; init; } = "";
         public int ControllerPort { get; init; } = DefaultControllerPort;
         public int MixedPort { get; init; } = DefaultMixedPort;
+        public string ExternalUi { get; init; } = DefaultExternalUi;
 
         public string ControllerApi => "http://127.0.0.1:" + ControllerPort;
+        public string WebUiPath => "/" + ExternalUi + "/";
     }
 
     private static HttpRequestMessage ControllerRequest(HttpMethod method, string path, HttpContent? content = null)
@@ -1159,6 +1162,7 @@ internal static class MihomoService
             string secret = "";
             int controllerPort = DefaultControllerPort;
             int mixedPort = DefaultMixedPort;
+            string externalUi = DefaultExternalUi;
             if (TryReadTopLevelYamlScalar(text, "secret", out string parsedSecret))
             {
                 secret = parsedSecret;
@@ -1177,11 +1181,17 @@ internal static class MihomoService
                 mixedPort = parsedMixed;
             }
 
+            if (TryReadTopLevelYamlScalar(text, "external-ui", out string parsedUi))
+            {
+                externalUi = NormalizeExternalUi(parsedUi);
+            }
+
             cfg = new KernelRuntimeConfig
             {
                 Secret = secret,
                 ControllerPort = controllerPort,
-                MixedPort = mixedPort
+                MixedPort = mixedPort,
+                ExternalUi = externalUi
             };
             return true;
         }
@@ -1382,6 +1392,23 @@ internal static class MihomoService
         }
 
         return false;
+    }
+
+    private static string NormalizeExternalUi(string raw)
+    {
+        string value = raw.Trim().Replace('\\', '/').Trim('/');
+        if (value.StartsWith("./", StringComparison.Ordinal))
+        {
+            value = value[2..];
+        }
+
+        int slash = value.LastIndexOf('/');
+        if (slash >= 0)
+        {
+            value = value[(slash + 1)..];
+        }
+
+        return value.Length > 0 ? value : DefaultExternalUi;
     }
 
     private static string UnquoteYamlScalar(string raw)
