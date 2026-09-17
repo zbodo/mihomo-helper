@@ -11,7 +11,14 @@ namespace MihomoTray;
 
 public sealed partial class MainWindow : Window
 {
+    private const double MinWindowWidthDip = 360;
+    private const double InitialWindowWidthDip = 400;
+    private const double MaxWindowWidthDip = 520;
+
     private bool _adjustingSize;
+    private bool _dashboardOpened;
+    private bool _proxyEnabledOnce;
+    private string? _uuidKernelPath;
 
     public MainWindow()
     {
@@ -20,24 +27,98 @@ public sealed partial class MainWindow : Window
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
         AppWindow.SetIcon("Assets\\AppIcon.ico");
-        RefreshKernelPlaceholder();
+        KernelPathBox.PlaceholderText = "选择或粘贴 mihomo 内核 exe";
         string saved = MihomoService.GetSavedKernelPathOrEmpty();
-        string? current = MihomoService.GetCurrentTaskKernelPath();
-        if (saved.Length > 0 && !string.Equals(saved, current, StringComparison.OrdinalIgnoreCase))
+        if (saved.Length > 0)
         {
             KernelPathBox.Text = saved;
         }
-        RefreshStatus();
+
+        MihomoService.SetActiveKernelPath(GetDisplayedKernelPath());
 
         FrameworkElement root = (FrameworkElement)Content;
         root.Loaded += OnRootLoaded;
         root.SizeChanged += OnRootSizeChanged;
     }
 
-    private void OnRootLoaded(object sender, RoutedEventArgs e)
+    private async void OnRootLoaded(object sender, RoutedEventArgs e)
     {
         ((FrameworkElement)Content).Loaded -= OnRootLoaded;
         FitHeightToContent(center: true, initialWidth: true);
+        Activate();
+        await InitializeStartupAsync();
+    }
+
+    private async Task InitializeStartupAsync()
+    {
+        try
+        {
+            await RefreshUuidKernelAsync();
+        }
+        finally
+        {
+            KernelPathPanel.IsEnabled = true;
+        }
+
+        try
+        {
+            MihomoService.SetActiveKernelPath(GetDisplayedKernelPath());
+            await MaybeEnableProxyAsync();
+            await MaybeOpenDashboardAsync();
+            await RefreshStatusAsync();
+        }
+        catch
+        {
+        }
+    }
+
+    private async Task RefreshUuidKernelAsync()
+    {
+        string saved = MihomoService.GetSavedKernelPathOrEmpty();
+        string? uuid = await Task.Run(MihomoService.GetCurrentTaskKernelPath);
+        _uuidKernelPath = uuid;
+        KernelPathBox.PlaceholderText = string.IsNullOrEmpty(uuid)
+            ? "选择或粘贴 mihomo 内核 exe"
+            : uuid;
+
+        string filled = KernelPathBox.Text.Trim();
+        if (filled.Length == 0 || string.Equals(filled, saved, StringComparison.OrdinalIgnoreCase))
+        {
+            KernelPathBox.Text = saved.Length > 0 && !string.Equals(saved, uuid, StringComparison.OrdinalIgnoreCase)
+                ? saved
+                : "";
+        }
+    }
+
+    private async Task MaybeEnableProxyAsync()
+    {
+        if (_proxyEnabledOnce)
+        {
+            return;
+        }
+
+        MihomoService.SetActiveKernelPath(GetDisplayedKernelPath());
+        bool enabled = await Task.Run(MihomoService.TryEnableSystemProxyFromConfig);
+        if (enabled)
+        {
+            _proxyEnabledOnce = true;
+        }
+    }
+
+    private async Task MaybeOpenDashboardAsync()
+    {
+        if (_dashboardOpened)
+        {
+            return;
+        }
+
+        MihomoService.SetActiveKernelPath(GetDisplayedKernelPath());
+        bool opened = await Task.Run(MihomoService.TryOpenDashboardFromConfig);
+        if (opened)
+        {
+            _dashboardOpened = true;
+            Activate();
+        }
     }
 
     private void OnRootSizeChanged(object sender, SizeChangedEventArgs e)
@@ -65,23 +146,25 @@ public sealed partial class MainWindow : Window
             DisplayArea display = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Nearest);
             RectInt32 work = display.WorkArea;
 
-            double widthDip = ContentPanel.ActualWidth;
-            if (widthDip < 1 || initialWidth)
-            {
-                widthDip = 400;
-            }
-
-            ContentPanel.Measure(new Size(widthDip, double.PositiveInfinity));
+            int minWidth = (int)Math.Ceiling(MinWindowWidthDip * scale);
+            int maxWidth = Math.Min((int)Math.Ceiling(MaxWindowWidthDip * scale), Math.Max(minWidth, work.Width - 48));
+            double measureWidth = initialWidth || ContentPanel.ActualWidth < 1
+                ? InitialWindowWidthDip
+                : Math.Clamp(ContentPanel.ActualWidth, MinWindowWidthDip, MaxWindowWidthDip);
+            ContentPanel.Measure(new Size(measureWidth, double.PositiveInfinity));
             double titleHeight = AppTitleBar.ActualHeight > 1 ? AppTitleBar.ActualHeight : 48;
             double contentHeight = ContentPanel.DesiredSize.Height;
             int clientHeight = Math.Clamp((int)Math.Ceiling((titleHeight + contentHeight) * scale), 240, work.Height - 48);
             int clientWidth = initialWidth
-                ? Math.Clamp((int)Math.Ceiling(widthDip * scale), 360, work.Width - 48)
-                : Math.Max(AppWindow.ClientSize.Width, 360);
+                ? (int)Math.Ceiling(InitialWindowWidthDip * scale)
+                : Math.Clamp(AppWindow.ClientSize.Width, minWidth, maxWidth);
+            clientWidth = Math.Clamp(clientWidth, minWidth, maxWidth);
 
             if (AppWindow.Presenter is OverlappedPresenter presenter)
             {
                 presenter.IsMaximizable = false;
+                presenter.PreferredMinimumWidth = minWidth;
+                presenter.PreferredMaximumWidth = maxWidth;
                 presenter.PreferredMaximumHeight = work.Height;
             }
 
@@ -89,7 +172,8 @@ public sealed partial class MainWindow : Window
 
             if (AppWindow.Presenter is OverlappedPresenter locked)
             {
-                locked.PreferredMinimumWidth = 360;
+                locked.PreferredMinimumWidth = minWidth;
+                locked.PreferredMaximumWidth = maxWidth;
                 locked.PreferredMinimumHeight = AppWindow.Size.Height;
                 locked.PreferredMaximumHeight = AppWindow.Size.Height;
             }
@@ -115,14 +199,8 @@ public sealed partial class MainWindow : Window
         {
             MihomoService.SaveKernelPath(path);
         }
-    }
 
-    private void RefreshKernelPlaceholder()
-    {
-        string? current = MihomoService.GetCurrentTaskKernelPath();
-        KernelPathBox.PlaceholderText = string.IsNullOrEmpty(current)
-            ? "选择或粘贴 mihomo 内核 exe"
-            : current;
+        MihomoService.SetActiveKernelPath(GetDisplayedKernelPath());
     }
 
     private string GetDisplayedKernelPath()
@@ -133,13 +211,11 @@ public sealed partial class MainWindow : Window
             return filled;
         }
 
-        return KernelPathBox.PlaceholderText?.Trim() ?? "";
+        return _uuidKernelPath ?? "";
     }
 
-    private void RefreshStatus()
+    private void ApplyStatus((string Proxy, string Tun, string Kernel) status)
     {
-        RefreshKernelPlaceholder();
-        var status = MihomoService.GetStatus();
         ProxyStatusText.Text = status.Proxy;
         TunStatusText.Text = status.Tun;
         KernelStatusText.Text = status.Kernel;
@@ -149,24 +225,30 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private async Task RefreshStatusAsync()
+    {
+        var status = await Task.Run(MihomoService.GetStatus);
+        ApplyStatus(status);
+    }
+
     private async void SafeRun(string action, bool skipConfirm = false)
     {
         bool needsPath = action is "InstallTask" or "RemoveTask" or "RemoveTaskConfirm";
-        if (needsPath)
-        {
-            PersistKernelPath();
-        }
+        PersistKernelPath();
 
         try
         {
             KernelStatusText.Text = "处理中...";
             string? path = needsPath ? GetDisplayedKernelPath() : null;
             await Task.Run(() => MihomoService.Run(action, path, skipConfirm));
-            RefreshStatus();
+            await RefreshUuidKernelAsync();
+            await MaybeEnableProxyAsync();
+            await MaybeOpenDashboardAsync();
+            await RefreshStatusAsync();
         }
         catch (OperationCanceledException)
         {
-            RefreshStatus();
+            await RefreshStatusAsync();
         }
         catch (Exception ex)
         {
@@ -200,7 +282,10 @@ public sealed partial class MainWindow : Window
 
         KernelPathBox.Text = file.Path;
         MihomoService.SaveKernelPath(file.Path);
-        RefreshStatus();
+        MihomoService.SetActiveKernelPath(file.Path);
+        await MaybeEnableProxyAsync();
+        await MaybeOpenDashboardAsync();
+        await RefreshStatusAsync();
     }
 
     private async void OnRemoveTask(object sender, RoutedEventArgs e)
@@ -233,10 +318,13 @@ public sealed partial class MainWindow : Window
     private void OnOff(object sender, RoutedEventArgs e) => SafeRun("Off");
     private void OnToggle(object sender, RoutedEventArgs e) => SafeRun("Toggle");
     private void OnStop(object sender, RoutedEventArgs e) => SafeRun("Stop");
-    private void OnRefresh(object sender, RoutedEventArgs e)
+    private async void OnRefresh(object sender, RoutedEventArgs e)
     {
         PersistKernelPath();
-        RefreshStatus();
+        await RefreshUuidKernelAsync();
+        await MaybeEnableProxyAsync();
+        await MaybeOpenDashboardAsync();
+        await RefreshStatusAsync();
     }
 
     private void OnInstallTask(object sender, RoutedEventArgs e) => SafeRun("InstallTask");

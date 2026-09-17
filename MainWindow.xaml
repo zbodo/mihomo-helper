@@ -16,7 +16,7 @@
 
         <TitleBar x:Name="AppTitleBar" Title="Mihomo">
             <TitleBar.IconSource>
-                <ImageIconSource ImageSource="Assets/mihomo-logo.png" />
+                <ImageIconSource ImageSource="Assets/mihomo-wrench.png" />
             </TitleBar.IconSource>
         </TitleBar>
 
@@ -27,6 +27,7 @@
             <StackPanel
                 x:Name="ContentPanel"
                 MinWidth="360"
+                MaxWidth="520"
                 Padding="20,4,20,20"
                 Spacing="16">
                 <Border
@@ -65,27 +66,33 @@
                     </Grid>
                 </Border>
 
-                <StackPanel Spacing="8">
-                    <TextBlock Style="{StaticResource CaptionTextBlockStyle}" Text="内核路径" />
-                    <Grid ColumnSpacing="8">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <TextBox
-                            x:Name="KernelPathBox"
-                            PlaceholderText="选择或粘贴 mihomo 内核 exe" />
-                        <Button
-                            Grid.Column="1"
-                            Click="OnBrowseKernel"
-                            Content="浏览" />
-                        <Button
-                            Grid.Column="2"
-                            Click="OnOpenKernelPath"
-                            Content="打开" />
-                    </Grid>
-                </StackPanel>
+                <ContentControl
+                    x:Name="KernelPathPanel"
+                    HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Stretch"
+                    IsEnabled="False">
+                    <StackPanel Spacing="8">
+                        <TextBlock Style="{StaticResource CaptionTextBlockStyle}" Text="内核路径" />
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox
+                                x:Name="KernelPathBox"
+                                PlaceholderText="选择或粘贴 mihomo 内核 exe" />
+                            <Button
+                                Grid.Column="1"
+                                Click="OnBrowseKernel"
+                                Content="浏览" />
+                            <Button
+                                Grid.Column="2"
+                                Click="OnOpenKernelPath"
+                                Content="打开" />
+                        </Grid>
+                    </StackPanel>
+                </ContentControl>
 
                 <StackPanel Spacing="8">
                     <TextBlock Style="{StaticResource CaptionTextBlockStyle}" Text="工作模式" />

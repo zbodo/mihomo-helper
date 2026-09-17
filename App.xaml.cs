@@ -22,7 +22,10 @@ public partial class App : Application
                 string? path = commandLine.Length > 2 ? commandLine[2] : null;
                 bool skipConfirm = action == "RemoveTaskConfirm";
                 MihomoService.Run(action, path, skipConfirm);
-                NativeDialog.Info(MihomoService.GetStatusText());
+                if (!string.Equals(action, "RunKernel", StringComparison.OrdinalIgnoreCase))
+                {
+                    NativeDialog.Info(MihomoService.GetStatusText());
+                }
             }
             catch (OperationCanceledException)
             {

@@ -12,6 +12,8 @@ internal sealed class ManagedTaskInfo
     public string TaskName { get; init; } = "";
     public string TaskPath { get; init; } = "";
     public string KernelPath { get; init; } = "";
+    public string Arguments { get; init; } = "";
+    public string WorkingDirectory { get; init; } = "";
     public string Description { get; init; } = "";
 
     public string FullName
@@ -28,15 +30,23 @@ internal static class MihomoService
 {
     public const string TaskUuid = "6B8E2C14-A91F-4D53-B7E0-3C1A9F8D2465";
 
-    private const string ControllerApi = "http://127.0.0.1:9090";
+    private const int DefaultControllerPort = 9090;
+    private const int DefaultMixedPort = 7890;
     private const string DefaultTaskName = "mihomo";
     private const string KernelArgs = "-d .\\ -f config.yaml";
-    private const int ProxyPort = 7890;
     private const string RegistryPath = @"Software\Microsoft\Windows\CurrentVersion\Internet Settings";
     private const string SettingsPath = @"Software\MihomoTray";
     private const string ProxyOverride = "localhost;127.*;10.*;172.16.*;172.17.*;172.18.*;172.19.*;172.20.*;172.21.*;172.22.*;172.23.*;172.24.*;172.25.*;172.26.*;172.27.*;172.28.*;172.29.*;172.30.*;172.31.*;192.168.*;<local>";
 
-    private static readonly HttpClient Http = CreateClient();
+    private static readonly HttpClient Http = new(new SocketsHttpHandler
+    {
+        UseProxy = false,
+        ConnectTimeout = TimeSpan.FromSeconds(5)
+    })
+    {
+        Timeout = TimeSpan.FromSeconds(5)
+    };
+    private static string? _activeKernelPath;
 
     public static void Run(string action, string? kernelPath = null, bool skipConfirm = false)
     {
@@ -68,21 +78,20 @@ internal static class MihomoService
                 StopKernel();
                 break;
             case "InstallTask":
-                EnsureAdmin("InstallTask", GetKernelPath());
                 InstallTask(GetKernelPath());
                 StartManagedTask();
                 break;
             case "RemoveTask":
-                EnsureAdmin(skipConfirm ? "RemoveTaskConfirm" : "RemoveTask", ResolveKernelPathHint());
                 RemoveTask(skipConfirm);
                 break;
             case "RemoveTaskConfirm":
-                EnsureAdmin("RemoveTaskConfirm", ResolveKernelPathHint());
                 RemoveTask(true);
                 break;
             case "StartTask":
-                EnsureAdmin("StartTask");
                 StartManagedTask();
+                break;
+            case "RunKernel":
+                StartKernelHidden(string.IsNullOrWhiteSpace(kernelPath) ? GetKernelPath() : kernelPath);
                 break;
             case "Status":
                 break;
@@ -113,38 +122,104 @@ internal static class MihomoService
 
     public static string? GetCurrentTaskKernelPath()
     {
-        if (TryFindManagedTask(out ManagedTaskInfo? managed) &&
-            managed is not null &&
-            !string.IsNullOrWhiteSpace(managed.KernelPath))
+        if (TryFindManagedTask(out ManagedTaskInfo? task) &&
+            task is not null &&
+            !string.IsNullOrWhiteSpace(task.KernelPath))
         {
-            return managed.KernelPath;
-        }
-
-        try
-        {
-            Type? type = Type.GetTypeFromProgID("Schedule.Service");
-            if (type is null)
-            {
-                return null;
-            }
-
-            dynamic service = Activator.CreateInstance(type)!;
-            service.Connect();
-            dynamic task = service.GetFolder("\\").GetTask(DefaultTaskName);
-            foreach (dynamic action in task.Definition.Actions)
-            {
-                string? path = Convert.ToString(action.Path);
-                if (!string.IsNullOrWhiteSpace(path))
-                {
-                    return path;
-                }
-            }
-        }
-        catch
-        {
+            return task.KernelPath;
         }
 
         return null;
+    }
+
+    public static void SetActiveKernelPath(string? path)
+    {
+        _activeKernelPath = string.IsNullOrWhiteSpace(path) ? null : path.Trim();
+    }
+
+    public static bool TryEnableSystemProxyFromConfig()
+    {
+        try
+        {
+            if (!TryLoadRuntimeConfig(out _))
+            {
+                return false;
+            }
+
+            SetProxy(true);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    public static bool TryOpenDashboardFromConfig()
+    {
+        try
+        {
+            if (!TryLoadRuntimeConfig(out KernelRuntimeConfig cfg))
+            {
+                return false;
+            }
+
+            if (!WaitForDashboardTarget(cfg))
+            {
+                return false;
+            }
+
+            string url = "http://127.0.0.1:" + cfg.ControllerPort +
+                "/ui/#/setup?hostname=127.0.0.1&port=" + cfg.ControllerPort +
+                "&secret=" + Uri.EscapeDataString(cfg.Secret);
+            NativeMethods.ShellExecute(IntPtr.Zero, "open", url, null, null, NativeMethods.SwShowNoActivate);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool WaitForDashboardTarget(KernelRuntimeConfig cfg)
+    {
+        for (int attempt = 1; attempt <= 3; attempt++)
+        {
+            if (IsDashboardReachable(cfg))
+            {
+                return true;
+            }
+
+            if (attempt < 3)
+            {
+                Thread.Sleep(1000);
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsDashboardReachable(KernelRuntimeConfig cfg)
+    {
+        try
+        {
+            using CancellationTokenSource cts = new(TimeSpan.FromSeconds(1));
+            using HttpRequestMessage request = new(
+                HttpMethod.Get,
+                "http://127.0.0.1:" + cfg.ControllerPort + "/ui/");
+            if (cfg.Secret.Length > 0)
+            {
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", cfg.Secret);
+            }
+
+            using HttpResponseMessage response = Http.Send(request, cts.Token);
+            int code = (int)response.StatusCode;
+            return code is >= 200 and < 400 or 401 or 403;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     public static void RevealInExplorer(string path)
@@ -236,6 +311,11 @@ internal static class MihomoService
 
     private static string? ResolveKernelPathHint()
     {
+        if (!string.IsNullOrWhiteSpace(_activeKernelPath))
+        {
+            return _activeKernelPath;
+        }
+
         if (TryGetSavedKernelPath(out string saved) && saved.Length > 0)
         {
             return saved;
@@ -244,21 +324,23 @@ internal static class MihomoService
         return GetCurrentTaskKernelPath();
     }
 
-    private static string GetApiSecret()
+    private static bool TryFindTaskByKernelPath(string? kernelPath, out ManagedTaskInfo? info)
     {
-        using RegistryKey? key = Registry.CurrentUser.OpenSubKey(SettingsPath, false);
-        return Convert.ToString(key?.GetValue("ApiSecret"))?.Trim() ?? "";
-    }
-
-    private static HttpClient CreateClient()
-    {
-        HttpClient client = new() { Timeout = TimeSpan.FromSeconds(5) };
-        string secret = GetApiSecret();
-        if (secret.Length > 0)
+        info = null;
+        if (string.IsNullOrWhiteSpace(kernelPath))
         {
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", secret);
+            return false;
         }
-        return client;
+
+        if (TryFindManagedTask(out ManagedTaskInfo? uuidTask) &&
+            uuidTask is not null &&
+            PathsEqual(uuidTask.KernelPath, kernelPath))
+        {
+            info = uuidTask;
+            return true;
+        }
+
+        return TryFindTask(task => PathsEqual(task.KernelPath, kernelPath), out info);
     }
 
     private static bool IsAdmin()
@@ -305,7 +387,7 @@ internal static class MihomoService
         }
 
         key.SetValue("ProxyEnable", enable ? 1 : 0, RegistryValueKind.DWord);
-        key.SetValue("ProxyServer", enable ? $"127.0.0.1:{ProxyPort}" : string.Empty, RegistryValueKind.String);
+        key.SetValue("ProxyServer", enable ? $"127.0.0.1:{LoadRuntimeConfig().MixedPort}" : string.Empty, RegistryValueKind.String);
         if (enable)
         {
             key.SetValue("ProxyOverride", ProxyOverride, RegistryValueKind.String);
@@ -328,7 +410,8 @@ internal static class MihomoService
             enable ? "{\"tun\":{\"enable\":true}}" : "{\"tun\":{\"enable\":false}}",
             Encoding.UTF8,
             "application/json");
-        using HttpResponseMessage response = await Http.PatchAsync(ControllerApi + "/configs", content);
+        using HttpRequestMessage request = ControllerRequest(HttpMethod.Patch, "/configs", content);
+        using HttpResponseMessage response = await Http.SendAsync(request);
         response.EnsureSuccessStatusCode();
     }
 
@@ -336,7 +419,15 @@ internal static class MihomoService
     {
         try
         {
-            string json = Http.GetStringAsync(ControllerApi + "/configs").GetAwaiter().GetResult();
+            using HttpRequestMessage request = ControllerRequest(HttpMethod.Get, "/configs");
+            using HttpResponseMessage response = Http.Send(request);
+            if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+            {
+                return "认证失败";
+            }
+
+            response.EnsureSuccessStatusCode();
+            string json = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
             int tunAt = json.IndexOf("\"tun\"", StringComparison.OrdinalIgnoreCase);
             if (tunAt < 0)
             {
@@ -394,7 +485,8 @@ internal static class MihomoService
     {
         try
         {
-            using HttpResponseMessage response = Http.GetAsync(ControllerApi + "/configs").GetAwaiter().GetResult();
+            using HttpRequestMessage request = ControllerRequest(HttpMethod.Get, "/configs");
+            using HttpResponseMessage response = Http.Send(request);
             return response.IsSuccessStatusCode;
         }
         catch
@@ -448,13 +540,7 @@ internal static class MihomoService
             string processName = GetProcessName(kernelExe);
             if (Process.GetProcessesByName(processName).Length == 0)
             {
-                Process.Start(new ProcessStartInfo
-                {
-                    FileName = kernelExe,
-                    Arguments = KernelArgs,
-                    WorkingDirectory = Path.GetDirectoryName(kernelExe) ?? "",
-                    UseShellExecute = false
-                });
+                StartKernelHidden(kernelExe);
             }
 
             WaitForKernel();
@@ -462,6 +548,55 @@ internal static class MihomoService
         }
 
         throw new InvalidOperationException("启动内核失败：未找到计划任务 mihomo");
+    }
+
+    private static void StartKernelHidden(string kernelExe)
+    {
+        kernelExe = kernelExe.Trim().Trim('"');
+        if (string.IsNullOrEmpty(kernelExe) || !File.Exists(kernelExe))
+        {
+            throw new InvalidOperationException("找不到内核: " + kernelExe);
+        }
+
+        if (IsKernelReachable())
+        {
+            return;
+        }
+
+        string processName = GetProcessName(kernelExe);
+        if (Process.GetProcessesByName(processName).Length > 0)
+        {
+            return;
+        }
+
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = kernelExe,
+            Arguments = KernelArgs,
+            WorkingDirectory = Path.GetDirectoryName(kernelExe) ?? "",
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WindowStyle = ProcessWindowStyle.Hidden
+        });
+    }
+
+    private static bool TryParseRunKernelPath(string actionPath, string arguments, out string kernel)
+    {
+        kernel = "";
+        string? self = Environment.ProcessPath;
+        if (string.IsNullOrEmpty(self) || !PathsEqual(actionPath, self))
+        {
+            return false;
+        }
+
+        List<string> args = SplitArgs(arguments);
+        if (args.Count < 2 || !args[0].Equals("RunKernel", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        kernel = args[1].Trim().Trim('"');
+        return kernel.Length > 0;
     }
 
     private static void StopKernel()
@@ -535,14 +670,30 @@ internal static class MihomoService
         dynamic definition = service.NewTask(0);
         definition.RegistrationInfo.Description = "MihomoTray " + TaskUuid;
 
-        definition.Triggers.Create(8);
-        dynamic action = definition.Actions.Create(0);
-        action.Path = kernelExe;
-        action.Arguments = KernelArgs;
-        action.WorkingDirectory = Path.GetDirectoryName(kernelExe) ?? "";
+        string user = WindowsIdentity.GetCurrent().Name;
+        dynamic trigger = definition.Triggers.Create(9);
+        try
+        {
+            trigger.UserId = user;
+        }
+        catch
+        {
+        }
 
-        definition.Principal.UserId = "S-1-5-18";
-        definition.Principal.LogonType = 5;
+        string? host = Environment.ProcessPath;
+        if (string.IsNullOrWhiteSpace(host) || !File.Exists(host))
+        {
+            throw new InvalidOperationException("找不到当前程序，无法创建静默启动任务");
+        }
+
+        dynamic action = definition.Actions.Create(0);
+        action.Path = host;
+        action.Arguments = "RunKernel \"" + kernelExe + "\"";
+        action.WorkingDirectory = Path.GetDirectoryName(kernelExe) ?? "";
+        definition.Settings.Hidden = true;
+
+        definition.Principal.UserId = user;
+        definition.Principal.LogonType = 3;
         definition.Principal.RunLevel = 0;
         definition.Settings.DisallowStartIfOnBatteries = false;
         definition.Settings.StopIfGoingOnBatteries = false;
@@ -553,7 +704,16 @@ internal static class MihomoService
         definition.Settings.RestartInterval = "PT1M";
         definition.Settings.RestartCount = 3;
 
-        folder.RegisterTaskDefinition(DefaultTaskName, definition, 2, null, null, 5);
+        try
+        {
+            folder.RegisterTaskDefinition(DefaultTaskName, definition, 2, user, null, 3);
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException(
+                "无法创建当前用户计划任务。若已存在系统级任务 " + DefaultTaskName + "，请先删除后再添加。" +
+                Environment.NewLine + ex.Message);
+        }
     }
 
     private static void EnsureExampleConfig(string kernelExe)
@@ -642,7 +802,19 @@ internal static class MihomoService
             KillProcess(GetProcessName(existing.KernelPath));
         }
 
-        RunHidden("schtasks.exe", $"/Delete /TN \"{existing.FullName}\" /F");
+        try
+        {
+            RunHidden("schtasks.exe", $"/Delete /TN \"{existing.FullName}\" /F");
+        }
+        catch (Exception ex)
+        {
+            if (!IsAdmin())
+            {
+                EnsureAdmin(skipConfirm ? "RemoveTaskConfirm" : "RemoveTask", ResolveKernelPathHint());
+            }
+
+            throw new InvalidOperationException("删除计划任务失败: " + ex.Message);
+        }
     }
 
     private static bool HasTaskUuid(ManagedTaskInfo task)
@@ -670,23 +842,345 @@ internal static class MihomoService
         }
     }
 
+    private sealed class KernelRuntimeConfig
+    {
+        public string Secret { get; init; } = "";
+        public int ControllerPort { get; init; } = DefaultControllerPort;
+        public int MixedPort { get; init; } = DefaultMixedPort;
+
+        public string ControllerApi => "http://127.0.0.1:" + ControllerPort;
+    }
+
+    private static HttpRequestMessage ControllerRequest(HttpMethod method, string path, HttpContent? content = null)
+    {
+        KernelRuntimeConfig cfg = LoadRuntimeConfig();
+        HttpRequestMessage request = new(method, cfg.ControllerApi + path);
+        if (cfg.Secret.Length > 0)
+        {
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", cfg.Secret);
+        }
+
+        request.Content = content;
+        return request;
+    }
+
+    private static KernelRuntimeConfig LoadRuntimeConfig()
+    {
+        return TryLoadRuntimeConfig(out KernelRuntimeConfig cfg) ? cfg : new KernelRuntimeConfig();
+    }
+
+    private static bool TryLoadRuntimeConfig(out KernelRuntimeConfig cfg)
+    {
+        cfg = new KernelRuntimeConfig();
+        try
+        {
+            if (!TryResolveConfigFile(out string configPath))
+            {
+                return false;
+            }
+
+            string text = File.ReadAllText(configPath);
+            string secret = "";
+            int controllerPort = DefaultControllerPort;
+            int mixedPort = DefaultMixedPort;
+            if (TryReadTopLevelYamlScalar(text, "secret", out string parsedSecret))
+            {
+                secret = parsedSecret;
+            }
+
+            if (TryReadTopLevelYamlScalar(text, "external-controller", out string bind) &&
+                TryParseControllerPort(bind, out int parsedPort))
+            {
+                controllerPort = parsedPort;
+            }
+
+            if (TryReadTopLevelYamlScalar(text, "mixed-port", out string mixedText) &&
+                int.TryParse(mixedText, out int parsedMixed) &&
+                parsedMixed is > 0 and <= 65535)
+            {
+                mixedPort = parsedMixed;
+            }
+
+            cfg = new KernelRuntimeConfig
+            {
+                Secret = secret,
+                ControllerPort = controllerPort,
+                MixedPort = mixedPort
+            };
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool TryResolveConfigFile(out string configPath)
+    {
+        configPath = "";
+        string? kernelPath = ResolveKernelPathHint();
+        if (TryFindTaskByKernelPath(kernelPath, out ManagedTaskInfo? task) && task is not null &&
+            TryResolveTaskConfigFile(task, out configPath))
+        {
+            return true;
+        }
+
+        return TryFindConfigInDirectory(Path.GetDirectoryName(kernelPath ?? ""), out configPath);
+    }
+
+    private static bool TryResolveTaskConfigFile(ManagedTaskInfo task, out string configPath)
+    {
+        configPath = "";
+        List<string> args = SplitArgs(task.Arguments);
+        TryGetFlagValue(args, "-f", "--config", out string config);
+        TryGetFlagValue(args, "-d", "--dir", out string dir);
+
+        string work = task.WorkingDirectory.Trim().Trim('"');
+        if (string.IsNullOrWhiteSpace(work))
+        {
+            work = Path.GetDirectoryName(task.KernelPath) ?? "";
+        }
+
+        string home = work;
+        if (!string.IsNullOrWhiteSpace(dir))
+        {
+            home = Path.IsPathRooted(dir) ? dir : Path.GetFullPath(Path.Combine(work, dir));
+        }
+
+        if (string.IsNullOrWhiteSpace(config))
+        {
+            return TryFindConfigInDirectory(home, out configPath);
+        }
+
+        string full = Path.IsPathRooted(config) ? config : Path.GetFullPath(Path.Combine(home, config));
+        if (!File.Exists(full))
+        {
+            return false;
+        }
+
+        configPath = full;
+        return true;
+    }
+
+    private static bool TryFindConfigInDirectory(string? directory, out string configPath)
+    {
+        configPath = "";
+        if (string.IsNullOrWhiteSpace(directory))
+        {
+            return false;
+        }
+
+        foreach (string name in new[] { "config.yaml", "config.yml" })
+        {
+            string candidate = Path.Combine(directory, name);
+            if (File.Exists(candidate))
+            {
+                configPath = candidate;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TryGetFlagValue(List<string> args, string shortName, string longName, out string value)
+    {
+        value = "";
+        for (int i = 0; i < args.Count; i++)
+        {
+            string arg = args[i];
+            if (arg.Equals(shortName, StringComparison.OrdinalIgnoreCase) ||
+                arg.Equals(longName, StringComparison.OrdinalIgnoreCase))
+            {
+                if (i + 1 < args.Count)
+                {
+                    value = args[i + 1].Trim().Trim('"');
+                    return value.Length > 0;
+                }
+
+                return false;
+            }
+
+            if (TryStripFlagPrefix(arg, shortName, out value) ||
+                TryStripFlagPrefix(arg, longName, out value))
+            {
+                return value.Length > 0;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TryStripFlagPrefix(string arg, string flag, out string value)
+    {
+        value = "";
+        if (arg.StartsWith(flag + "=", StringComparison.OrdinalIgnoreCase))
+        {
+            value = arg.Substring(flag.Length + 1).Trim().Trim('"');
+            return true;
+        }
+
+        if (flag.Length == 2 &&
+            arg.StartsWith(flag, StringComparison.OrdinalIgnoreCase) &&
+            arg.Length > flag.Length &&
+            arg[flag.Length] != '-')
+        {
+            value = arg.Substring(flag.Length).Trim().Trim('"');
+            return true;
+        }
+
+        return false;
+    }
+
+    private static List<string> SplitArgs(string? commandLine)
+    {
+        List<string> result = [];
+        if (string.IsNullOrWhiteSpace(commandLine))
+        {
+            return result;
+        }
+
+        var current = new StringBuilder();
+        bool inQuotes = false;
+        foreach (char c in commandLine)
+        {
+            if (c == '"')
+            {
+                inQuotes = !inQuotes;
+                continue;
+            }
+
+            if (char.IsWhiteSpace(c) && !inQuotes)
+            {
+                if (current.Length > 0)
+                {
+                    result.Add(current.ToString());
+                    current.Clear();
+                }
+
+                continue;
+            }
+
+            current.Append(c);
+        }
+
+        if (current.Length > 0)
+        {
+            result.Add(current.ToString());
+        }
+
+        return result;
+    }
+
+    private static bool TryReadTopLevelYamlScalar(string text, string key, out string value)
+    {
+        value = "";
+        using StringReader reader = new(text);
+        string? line;
+        while ((line = reader.ReadLine()) is not null)
+        {
+            if (line.Length == 0 || char.IsWhiteSpace(line[0]) || line[0] == '#')
+            {
+                continue;
+            }
+
+            int colon = line.IndexOf(':');
+            if (colon <= 0)
+            {
+                continue;
+            }
+
+            if (!line.Substring(0, colon).Trim().Equals(key, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            string raw = line.Substring(colon + 1).Trim();
+            if (raw.Length == 0 || raw[0] is '|' or '>' or '{' or '[')
+            {
+                return false;
+            }
+
+            value = UnquoteYamlScalar(raw);
+            return true;
+        }
+
+        return false;
+    }
+
+    private static string UnquoteYamlScalar(string raw)
+    {
+        if (raw.Length >= 2)
+        {
+            char quote = raw[0];
+            if ((quote == '"' || quote == '\'') && raw[^1] == quote)
+            {
+                string inner = raw.Substring(1, raw.Length - 2);
+                return quote == '"'
+                    ? inner.Replace("\\\"", "\"").Replace("\\\\", "\\")
+                    : inner;
+            }
+        }
+
+        int comment = raw.IndexOf(" #", StringComparison.Ordinal);
+        if (comment >= 0)
+        {
+            raw = raw.Substring(0, comment).TrimEnd();
+        }
+
+        return raw.Trim();
+    }
+
+    private static bool TryParseControllerPort(string bind, out int port)
+    {
+        port = 0;
+        bind = bind.Trim();
+        if (bind.StartsWith('['))
+        {
+            int close = bind.LastIndexOf(']');
+            int colon = bind.LastIndexOf(':');
+            if (close >= 0 && colon > close)
+            {
+                return int.TryParse(bind.AsSpan(colon + 1), out port) && port is > 0 and <= 65535;
+            }
+
+            return false;
+        }
+
+        int last = bind.LastIndexOf(':');
+        if (last < 0)
+        {
+            return false;
+        }
+
+        return int.TryParse(bind.AsSpan(last + 1), out port) && port is > 0 and <= 65535;
+    }
+
     private static ManagedTaskInfo ReadTaskInfo(dynamic folder, dynamic task)
     {
         string description = Convert.ToString(task.Definition.RegistrationInfo.Description) ?? "";
         string kernel = "";
+        string arguments = "";
+        string workingDirectory = "";
         foreach (dynamic action in task.Definition.Actions)
         {
             try
             {
-                kernel = Convert.ToString(action.Path) ?? "";
+                string path = Convert.ToString(action.Path) ?? "";
+                if (string.IsNullOrEmpty(path))
+                {
+                    continue;
+                }
+
+                arguments = Convert.ToString(action.Arguments) ?? "";
+                workingDirectory = Convert.ToString(action.WorkingDirectory) ?? "";
+                kernel = TryParseRunKernelPath(path, arguments, out string parsedKernel)
+                    ? parsedKernel
+                    : path;
+                break;
             }
             catch
             {
-            }
-
-            if (!string.IsNullOrEmpty(kernel))
-            {
-                break;
             }
         }
 
@@ -695,6 +1189,8 @@ internal static class MihomoService
             TaskName = Convert.ToString(task.Name) ?? "",
             TaskPath = Convert.ToString(folder.Path) ?? "\\",
             KernelPath = kernel,
+            Arguments = arguments,
+            WorkingDirectory = workingDirectory,
             Description = description
         };
     }

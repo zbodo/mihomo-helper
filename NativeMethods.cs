@@ -54,6 +54,17 @@ internal static class NativeMethods
     [DllImport("kernel32.dll")]
     public static extern IntPtr GetModuleHandle(string? lpModuleName);
 
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    public static extern IntPtr ShellExecute(
+        IntPtr hwnd,
+        string lpOperation,
+        string lpFile,
+        string? lpParameters,
+        string? lpDirectory,
+        int nShowCmd);
+
+    public const int SwShowNoActivate = 4;
+
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern IntPtr LoadImage(IntPtr hInst, string name, uint type, int cx, int cy, uint fuLoad);
 
