@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "MihomoTray (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "MihomoTray (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}
