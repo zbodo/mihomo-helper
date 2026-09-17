@@ -1,9 +1,9 @@
 {
   "profiles": {
-    "MihomoTray (Package)": {
+    "Mihomo Helper (Package)": {
       "commandName": "MsixPackage"
     },
-    "MihomoTray (Unpackaged)": {
+    "Mihomo Helper (Unpackaged)": {
       "commandName": "Project"
     }
   }

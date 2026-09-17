@@ -3,7 +3,7 @@
     x:Class="MihomoTray.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    Title="Mihomo">
+    Title="Mihomo Helper">
     <Window.SystemBackdrop>
         <MicaBackdrop />
     </Window.SystemBackdrop>
@@ -14,7 +14,7 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <TitleBar x:Name="AppTitleBar" Title="Mihomo">
+        <TitleBar x:Name="AppTitleBar" Title="Mihomo Helper">
             <TitleBar.IconSource>
                 <ImageIconSource ImageSource="Assets/mihomo-wrench.png" />
             </TitleBar.IconSource>
@@ -102,15 +102,18 @@
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <Button
+                            x:Name="ProxyToggleButton"
                             HorizontalAlignment="Stretch"
-                            Click="OnProxy"
-                            Style="{StaticResource AccentButtonStyle}"
-                            Content="系统代理" />
+                            Click="OnToggleProxy"
+                            IsEnabled="False"
+                            Content="切换系统代理" />
                         <Button
+                            x:Name="TunToggleButton"
                             Grid.Column="1"
                             HorizontalAlignment="Stretch"
-                            Click="OnTun"
-                            Content="TUN" />
+                            Click="OnToggleTun"
+                            IsEnabled="False"
+                            Content="切换 TUN" />
                     </Grid>
                     <Grid ColumnSpacing="8">
                         <Grid.ColumnDefinitions>
@@ -118,9 +121,22 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
-                        <Button HorizontalAlignment="Stretch" Click="OnOff" Content="关代理" />
-                        <Button Grid.Column="1" HorizontalAlignment="Stretch" Click="OnToggle" Content="切换" />
-                        <Button Grid.Column="2" HorizontalAlignment="Stretch" Click="OnStop" Content="停内核" />
+                        <Button
+                            x:Name="WebUiButton"
+                            HorizontalAlignment="Stretch"
+                            Click="OnOpenWebUi"
+                            IsEnabled="False"
+                            Content="启动 WEBUI" />
+                        <Button
+                            Grid.Column="1"
+                            HorizontalAlignment="Stretch"
+                            Click="OnStartKernel"
+                            Content="启动内核" />
+                        <Button
+                            Grid.Column="2"
+                            HorizontalAlignment="Stretch"
+                            Click="OnStopKernel"
+                            Content="终止内核" />
                     </Grid>
                 </StackPanel>
 

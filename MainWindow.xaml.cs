@@ -15,9 +15,10 @@ public sealed partial class MainWindow : Window
     private const double InitialWindowWidthDip = 400;
     private const double MaxWindowWidthDip = 520;
 
+    private readonly DispatcherTimer _webUiTimer = new() { Interval = TimeSpan.FromSeconds(2) };
     private bool _adjustingSize;
-    private bool _dashboardOpened;
     private bool _proxyEnabledOnce;
+    private bool _webUiChecking;
     private string? _uuidKernelPath;
 
     public MainWindow()
@@ -35,6 +36,9 @@ public sealed partial class MainWindow : Window
         }
 
         MihomoService.SetActiveKernelPath(GetDisplayedKernelPath());
+        WebUiButton.IsEnabled = false;
+        _webUiTimer.Tick += OnWebUiTimerTick;
+        Closed += (_, _) => _webUiTimer.Stop();
 
         FrameworkElement root = (FrameworkElement)Content;
         root.Loaded += OnRootLoaded;
@@ -63,12 +67,33 @@ public sealed partial class MainWindow : Window
         try
         {
             MihomoService.SetActiveKernelPath(GetDisplayedKernelPath());
+            await Task.Run(MihomoService.TryPrepareRuntimeConfig);
+            SetConfigDependentEnabled(true);
+            await RefreshWebUiButtonAsync();
+            _webUiTimer.Start();
             await MaybeEnableProxyAsync();
-            await MaybeOpenDashboardAsync();
             await RefreshStatusAsync();
         }
         catch
         {
+            SetConfigDependentEnabled(true);
+            _webUiTimer.Start();
+            await RefreshModeButtonsAsync();
+        }
+    }
+
+    private void SetConfigDependentEnabled(bool enabled)
+    {
+        ProxyToggleButton.IsEnabled = enabled;
+        TunToggleButton.IsEnabled = enabled;
+        if (!enabled)
+        {
+            ApplyModeButtons(proxyOn: false, tunOn: false);
+        }
+
+        if (ContentPanel.IsLoaded)
+        {
+            FitHeightToContent(center: false, initialWidth: false);
         }
     }
 
@@ -90,6 +115,48 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private async void OnWebUiTimerTick(object? sender, object e)
+    {
+        await RefreshWebUiButtonAsync();
+        await RefreshModeButtonsAsync();
+    }
+
+    private async Task RefreshWebUiButtonAsync()
+    {
+        if (_webUiChecking)
+        {
+            return;
+        }
+
+        _webUiChecking = true;
+        try
+        {
+            MihomoService.SetActiveKernelPath(GetDisplayedKernelPath());
+            WebUiButton.IsEnabled = await Task.Run(MihomoService.TryValidateWebUiConfig);
+        }
+        catch
+        {
+            WebUiButton.IsEnabled = false;
+        }
+        finally
+        {
+            _webUiChecking = false;
+        }
+    }
+
+    private async Task ShowWebUiConfigErrorAsync()
+    {
+        WebUiButton.IsEnabled = false;
+        ContentDialog dialog = new()
+        {
+            Title = "启动 WEBUI",
+            Content = "没从config中获取到有效配置",
+            CloseButtonText = "确定",
+            XamlRoot = ((FrameworkElement)Content).XamlRoot
+        };
+        await dialog.ShowAsync();
+    }
+
     private async Task MaybeEnableProxyAsync()
     {
         if (_proxyEnabledOnce)
@@ -102,22 +169,6 @@ public sealed partial class MainWindow : Window
         if (enabled)
         {
             _proxyEnabledOnce = true;
-        }
-    }
-
-    private async Task MaybeOpenDashboardAsync()
-    {
-        if (_dashboardOpened)
-        {
-            return;
-        }
-
-        MihomoService.SetActiveKernelPath(GetDisplayedKernelPath());
-        bool opened = await Task.Run(MihomoService.TryOpenDashboardFromConfig);
-        if (opened)
-        {
-            _dashboardOpened = true;
-            Activate();
         }
     }
 
@@ -219,10 +270,57 @@ public sealed partial class MainWindow : Window
         ProxyStatusText.Text = status.Proxy;
         TunStatusText.Text = status.Tun;
         KernelStatusText.Text = status.Kernel;
+        ApplyModeButtons(
+            string.Equals(status.Proxy, "启用", StringComparison.Ordinal),
+            string.Equals(status.Tun, "启用", StringComparison.Ordinal));
         if (ContentPanel.IsLoaded)
         {
             FitHeightToContent(center: false, initialWidth: false);
         }
+    }
+
+    private async Task RefreshModeButtonsAsync()
+    {
+        if (!ProxyToggleButton.IsEnabled && !TunToggleButton.IsEnabled)
+        {
+            ApplyModeButtons(proxyOn: false, tunOn: false);
+            return;
+        }
+
+        try
+        {
+            var modes = await Task.Run(MihomoService.QueryModeEnabled);
+            ApplyModeButtons(modes.ProxyEnabled, modes.TunEnabled);
+        }
+        catch
+        {
+            ApplyModeButtons(proxyOn: false, tunOn: false);
+        }
+    }
+
+    private void ApplyModeButtons(bool proxyOn, bool tunOn)
+    {
+        ApplyModeButton(ProxyToggleButton, proxyOn, "切换系统代理", "关闭系统代理", "开启系统代理");
+        ApplyModeButton(TunToggleButton, tunOn, "切换 TUN", "关闭 TUN", "开启 TUN");
+    }
+
+    private static void ApplyModeButton(Button button, bool isOn, string idleText, string onText, string offText)
+    {
+        if (!button.IsEnabled)
+        {
+            button.Content = idleText;
+            button.ClearValue(FrameworkElement.StyleProperty);
+            return;
+        }
+
+        button.Content = isOn ? onText : offText;
+        if (isOn && Application.Current.Resources.TryGetValue("AccentButtonStyle", out object style) && style is Style accent)
+        {
+            button.Style = accent;
+            return;
+        }
+
+        button.ClearValue(FrameworkElement.StyleProperty);
     }
 
     private async Task RefreshStatusAsync()
@@ -242,8 +340,6 @@ public sealed partial class MainWindow : Window
             string? path = needsPath ? GetDisplayedKernelPath() : null;
             await Task.Run(() => MihomoService.Run(action, path, skipConfirm));
             await RefreshUuidKernelAsync();
-            await MaybeEnableProxyAsync();
-            await MaybeOpenDashboardAsync();
             await RefreshStatusAsync();
         }
         catch (OperationCanceledException)
@@ -253,6 +349,7 @@ public sealed partial class MainWindow : Window
         catch (Exception ex)
         {
             KernelStatusText.Text = ex.Message;
+            await RefreshModeButtonsAsync();
         }
     }
 
@@ -283,49 +380,96 @@ public sealed partial class MainWindow : Window
         KernelPathBox.Text = file.Path;
         MihomoService.SaveKernelPath(file.Path);
         MihomoService.SetActiveKernelPath(file.Path);
-        await MaybeEnableProxyAsync();
-        await MaybeOpenDashboardAsync();
         await RefreshStatusAsync();
+    }
+
+    private async Task<bool> ConfirmAsync(string title, string content, string primary)
+    {
+        ContentDialog dialog = new()
+        {
+            Title = title,
+            Content = content,
+            PrimaryButtonText = primary,
+            CloseButtonText = "取消",
+            XamlRoot = ((FrameworkElement)Content).XamlRoot
+        };
+        return await dialog.ShowAsync() == ContentDialogResult.Primary;
     }
 
     private async void OnRemoveTask(object sender, RoutedEventArgs e)
     {
         PersistKernelPath();
+        string message = "确认删除计划任务？";
         if (MihomoService.TryFindTaskToRemove(GetDisplayedKernelPath(), out ManagedTaskInfo? info) && info is not null)
         {
-            ContentDialog dialog = new()
-            {
-                Title = "删除计划任务",
-                Content = $"任务: {info.FullName}{Environment.NewLine}内核: {info.KernelPath}",
-                PrimaryButtonText = "删除",
-                CloseButtonText = "取消",
-                XamlRoot = ((FrameworkElement)Content).XamlRoot
-            };
-            if (await dialog.ShowAsync() != ContentDialogResult.Primary)
-            {
-                return;
-            }
+            message = $"任务: {info.FullName}{Environment.NewLine}内核: {info.KernelPath}{Environment.NewLine}{Environment.NewLine}确认删除？";
+        }
 
-            SafeRun("RemoveTaskConfirm", true);
+        if (!await ConfirmAsync("删除计划任务", message, "删除"))
+        {
             return;
         }
 
-        SafeRun("RemoveTask");
+        SafeRun("RemoveTaskConfirm", true);
     }
 
-    private void OnProxy(object sender, RoutedEventArgs e) => SafeRun("Proxy");
-    private void OnTun(object sender, RoutedEventArgs e) => SafeRun("Tun");
-    private void OnOff(object sender, RoutedEventArgs e) => SafeRun("Off");
-    private void OnToggle(object sender, RoutedEventArgs e) => SafeRun("Toggle");
-    private void OnStop(object sender, RoutedEventArgs e) => SafeRun("Stop");
+    private void OnToggleProxy(object sender, RoutedEventArgs e) => SafeRun("ToggleProxy");
+    private void OnToggleTun(object sender, RoutedEventArgs e) => SafeRun("ToggleTun");
+    private void OnStartKernel(object sender, RoutedEventArgs e) => SafeRun("StartKernel");
+
+    private async void OnOpenWebUi(object sender, RoutedEventArgs e)
+    {
+        PersistKernelPath();
+        try
+        {
+            bool ready = await Task.Run(MihomoService.TryValidateWebUiConfig);
+            if (!ready)
+            {
+                await ShowWebUiConfigErrorAsync();
+                return;
+            }
+
+            bool opened = await Task.Run(MihomoService.TryOpenDashboardFromConfig);
+            if (!opened)
+            {
+                await ShowWebUiConfigErrorAsync();
+            }
+        }
+        catch
+        {
+            await ShowWebUiConfigErrorAsync();
+        }
+    }
+
+    private async void OnStopKernel(object sender, RoutedEventArgs e)
+    {
+        if (!await ConfirmAsync("终止内核", "确认终止内核？", "终止"))
+        {
+            return;
+        }
+
+        SafeRun("Stop");
+    }
+
+    private async void OnInstallTask(object sender, RoutedEventArgs e)
+    {
+        PersistKernelPath();
+        string kernel = GetDisplayedKernelPath();
+        if (!await ConfirmAsync(
+            "添加计划任务",
+            string.IsNullOrEmpty(kernel) ? "确认添加计划任务？" : "内核: " + kernel + Environment.NewLine + Environment.NewLine + "确认添加？",
+            "添加"))
+        {
+            return;
+        }
+
+        SafeRun("InstallTask");
+    }
+
     private async void OnRefresh(object sender, RoutedEventArgs e)
     {
         PersistKernelPath();
         await RefreshUuidKernelAsync();
-        await MaybeEnableProxyAsync();
-        await MaybeOpenDashboardAsync();
         await RefreshStatusAsync();
     }
-
-    private void OnInstallTask(object sender, RoutedEventArgs e) => SafeRun("InstallTask");
 }

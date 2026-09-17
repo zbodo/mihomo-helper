@@ -73,11 +73,27 @@ internal static class MihomoService
             case "Toggle":
                 Run(IsProxyEnabled() ? "Tun" : "Proxy");
                 break;
+            case "ToggleProxy":
+                ToggleSystemProxy();
+                break;
+            case "ToggleTun":
+                ToggleTunMode();
+                break;
+            case "StartKernel":
+                StartKernel();
+                break;
             case "Stop":
-                SetProxy(false);
                 StopKernel();
                 break;
+            case "OpenWebUi":
+                if (!TryOpenDashboardFromConfig())
+                {
+                    throw new InvalidOperationException("无法打开 WEBUI");
+                }
+
+                break;
             case "InstallTask":
+                EnsureAdmin("InstallTask", GetKernelPath());
                 InstallTask(GetKernelPath());
                 StartManagedTask();
                 break;
@@ -115,6 +131,11 @@ internal static class MihomoService
         return (proxy, tun, kernel);
     }
 
+    public static (bool ProxyEnabled, bool TunEnabled) QueryModeEnabled()
+    {
+        return (IsProxyEnabled(), IsTunEnabled());
+    }
+
     public static string GetSavedKernelPathOrEmpty()
     {
         return TryGetSavedKernelPath(out string path) ? path : "";
@@ -137,6 +158,11 @@ internal static class MihomoService
         _activeKernelPath = string.IsNullOrWhiteSpace(path) ? null : path.Trim();
     }
 
+    public static bool TryPrepareRuntimeConfig()
+    {
+        return TryLoadRuntimeConfig(out _);
+    }
+
     public static bool TryEnableSystemProxyFromConfig()
     {
         try
@@ -146,8 +172,20 @@ internal static class MihomoService
                 return false;
             }
 
-            SetProxy(true);
+            EnableSystemProxyExclusive();
             return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    public static bool TryValidateWebUiConfig()
+    {
+        try
+        {
+            return TryLoadRuntimeConfig(out KernelRuntimeConfig cfg) && IsWebUiReady(cfg);
         }
         catch
         {
@@ -159,12 +197,7 @@ internal static class MihomoService
     {
         try
         {
-            if (!TryLoadRuntimeConfig(out KernelRuntimeConfig cfg))
-            {
-                return false;
-            }
-
-            if (!WaitForDashboardTarget(cfg))
+            if (!TryLoadRuntimeConfig(out KernelRuntimeConfig cfg) || !IsWebUiReady(cfg))
             {
                 return false;
             }
@@ -181,25 +214,27 @@ internal static class MihomoService
         }
     }
 
-    private static bool WaitForDashboardTarget(KernelRuntimeConfig cfg)
+    private static bool IsWebUiReady(KernelRuntimeConfig cfg)
     {
-        for (int attempt = 1; attempt <= 3; attempt++)
-        {
-            if (IsDashboardReachable(cfg))
-            {
-                return true;
-            }
-
-            if (attempt < 3)
-            {
-                Thread.Sleep(1000);
-            }
-        }
-
-        return false;
+        return IsControllerAuthorized(cfg) && IsWebUiPageReachable(cfg);
     }
 
-    private static bool IsDashboardReachable(KernelRuntimeConfig cfg)
+    private static bool IsControllerAuthorized(KernelRuntimeConfig cfg)
+    {
+        try
+        {
+            using CancellationTokenSource cts = new(TimeSpan.FromSeconds(1));
+            using HttpRequestMessage request = ControllerRequest(HttpMethod.Get, "/configs");
+            using HttpResponseMessage response = Http.Send(request, cts.Token);
+            return response.IsSuccessStatusCode;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool IsWebUiPageReachable(KernelRuntimeConfig cfg)
     {
         try
         {
@@ -207,14 +242,9 @@ internal static class MihomoService
             using HttpRequestMessage request = new(
                 HttpMethod.Get,
                 "http://127.0.0.1:" + cfg.ControllerPort + "/ui/");
-            if (cfg.Secret.Length > 0)
-            {
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", cfg.Secret);
-            }
-
             using HttpResponseMessage response = Http.Send(request, cts.Token);
             int code = (int)response.StatusCode;
-            return code is >= 200 and < 400 or 401 or 403;
+            return code is >= 200 and < 400;
         }
         catch
         {
@@ -378,6 +408,87 @@ internal static class MihomoService
         throw new OperationCanceledException();
     }
 
+    private static void ToggleSystemProxy()
+    {
+        if (IsProxyEnabled())
+        {
+            SetProxy(false);
+            return;
+        }
+
+        EnableSystemProxyExclusive();
+    }
+
+    private static void ToggleTunMode()
+    {
+        if (IsTunEnabled())
+        {
+            SetTun(false).GetAwaiter().GetResult();
+            return;
+        }
+
+        EnableTunExclusive();
+    }
+
+    private static void EnableSystemProxyExclusive()
+    {
+        SetProxy(true);
+        if (!IsProxyEnabled())
+        {
+            throw new InvalidOperationException("开启系统代理失败");
+        }
+
+        try
+        {
+            if (IsTunEnabled())
+            {
+                SetTun(false).GetAwaiter().GetResult();
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    private static void EnableTunExclusive()
+    {
+        StartKernel();
+        try
+        {
+            SetTun(true).GetAwaiter().GetResult();
+        }
+        catch
+        {
+        }
+
+        if (!IsTunEnabled())
+        {
+            RestartKernelAsSystemOrElevated();
+            SetTun(true).GetAwaiter().GetResult();
+        }
+
+        if (!IsTunEnabled())
+        {
+            throw new InvalidOperationException("无法打开 TUN。请先添加 SYSTEM 计划任务，或允许管理员权限");
+        }
+
+        try
+        {
+            if (IsProxyEnabled())
+            {
+                SetProxy(false);
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    private static bool IsTunEnabled()
+    {
+        return string.Equals(QueryTun(), "启用", StringComparison.Ordinal);
+    }
+
     private static void SetProxy(bool enable)
     {
         using RegistryKey? key = Registry.CurrentUser.OpenSubKey(RegistryPath, true);
@@ -406,13 +517,22 @@ internal static class MihomoService
 
     private static async Task SetTun(bool enable)
     {
-        using StringContent content = new(
-            enable ? "{\"tun\":{\"enable\":true}}" : "{\"tun\":{\"enable\":false}}",
-            Encoding.UTF8,
-            "application/json");
+        string payload = enable
+            ? "{\"tun\":{\"enable\":true}}"
+            : "{\"tun\":{\"enable\":false}}";
+        using StringContent content = new(payload, Encoding.UTF8, "application/json");
         using HttpRequestMessage request = ControllerRequest(HttpMethod.Patch, "/configs", content);
         using HttpResponseMessage response = await Http.SendAsync(request);
-        response.EnsureSuccessStatusCode();
+        if (response.IsSuccessStatusCode)
+        {
+            return;
+        }
+
+        string body = (await response.Content.ReadAsStringAsync()).Trim();
+        throw new InvalidOperationException(
+            string.IsNullOrWhiteSpace(body)
+                ? "设置 TUN 失败: HTTP " + (int)response.StatusCode
+                : "设置 TUN 失败: " + body);
     }
 
     private static string QueryTun()
@@ -428,22 +548,88 @@ internal static class MihomoService
 
             response.EnsureSuccessStatusCode();
             string json = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
-            int tunAt = json.IndexOf("\"tun\"", StringComparison.OrdinalIgnoreCase);
-            if (tunAt < 0)
-            {
-                return "未知";
-            }
-
-            string slice = json.Substring(tunAt, Math.Min(120, json.Length - tunAt));
-            return slice.Contains("\"enable\":true", StringComparison.OrdinalIgnoreCase) ||
-                   slice.Contains("\"enable\": true", StringComparison.OrdinalIgnoreCase)
-                ? "启用"
-                : "关闭";
+            return TryReadTunEnabled(json, out bool enabled)
+                ? (enabled ? "启用" : "关闭")
+                : "未知";
         }
         catch
         {
             return "无法连接内核";
         }
+    }
+
+    private static bool TryReadTunEnabled(string json, out bool enabled)
+    {
+        enabled = false;
+        int tunAt = json.IndexOf("\"tun\"", StringComparison.OrdinalIgnoreCase);
+        if (tunAt < 0)
+        {
+            return false;
+        }
+
+        int objStart = json.IndexOf('{', tunAt);
+        if (objStart < 0)
+        {
+            return false;
+        }
+
+        int enableAt = -1;
+        int depth = 0;
+        for (int i = objStart; i < json.Length; i++)
+        {
+            char c = json[i];
+            if (c == '{')
+            {
+                depth++;
+                continue;
+            }
+
+            if (c == '}')
+            {
+                depth--;
+                if (depth <= 0)
+                {
+                    break;
+                }
+
+                continue;
+            }
+
+            if (depth == 1 &&
+                enableAt < 0 &&
+                i + 8 <= json.Length &&
+                json.AsSpan(i, 8).Equals("\"enable\"".AsSpan(), StringComparison.OrdinalIgnoreCase))
+            {
+                enableAt = i;
+                break;
+            }
+        }
+
+        if (enableAt < 0)
+        {
+            return false;
+        }
+
+        int colon = json.IndexOf(':', enableAt);
+        if (colon < 0)
+        {
+            return false;
+        }
+
+        string value = json.Substring(colon + 1).TrimStart();
+        if (value.StartsWith("true", StringComparison.OrdinalIgnoreCase))
+        {
+            enabled = true;
+            return true;
+        }
+
+        if (value.StartsWith("false", StringComparison.OrdinalIgnoreCase))
+        {
+            enabled = false;
+            return true;
+        }
+
+        return false;
     }
 
     private static bool TryGetSavedKernelPath(out string path)
@@ -580,6 +766,64 @@ internal static class MihomoService
         });
     }
 
+    private static void RestartKernelAsSystemOrElevated()
+    {
+        StopKernel();
+        if (TryFindManagedTask(out ManagedTaskInfo? managed) && managed is not null)
+        {
+            StartTask(managed.FullName);
+            WaitForKernel();
+            return;
+        }
+
+        try
+        {
+            StartTask("\\" + DefaultTaskName);
+            WaitForKernel();
+            return;
+        }
+        catch
+        {
+        }
+
+        StartKernelElevated();
+    }
+
+    private static void StartKernelElevated()
+    {
+        string? kernelExe = ResolveKernelPathHint();
+        if (string.IsNullOrWhiteSpace(kernelExe) || !File.Exists(kernelExe))
+        {
+            kernelExe = GetKernelPath();
+        }
+
+        string? host = Environment.ProcessPath;
+        if (string.IsNullOrWhiteSpace(host) || !File.Exists(host))
+        {
+            throw new InvalidOperationException("找不到当前程序，无法提权启动内核");
+        }
+
+        ProcessStartInfo psi = new()
+        {
+            FileName = host,
+            Arguments = "RunKernel \"" + kernelExe + "\"",
+            UseShellExecute = true,
+            Verb = "runas"
+        };
+
+        try
+        {
+            using Process? process = Process.Start(psi);
+            process?.WaitForExit();
+        }
+        catch
+        {
+            throw new InvalidOperationException("已取消管理员授权，无法打开 TUN");
+        }
+
+        WaitForKernel();
+    }
+
     private static bool TryParseRunKernelPath(string actionPath, string arguments, out string kernel)
     {
         kernel = "";
@@ -668,33 +912,18 @@ internal static class MihomoService
         service.Connect();
         dynamic folder = service.GetFolder("\\");
         dynamic definition = service.NewTask(0);
-        definition.RegistrationInfo.Description = "MihomoTray " + TaskUuid;
+        definition.RegistrationInfo.Description = "Mihomo Helper " + TaskUuid;
 
-        string user = WindowsIdentity.GetCurrent().Name;
-        dynamic trigger = definition.Triggers.Create(9);
-        try
-        {
-            trigger.UserId = user;
-        }
-        catch
-        {
-        }
-
-        string? host = Environment.ProcessPath;
-        if (string.IsNullOrWhiteSpace(host) || !File.Exists(host))
-        {
-            throw new InvalidOperationException("找不到当前程序，无法创建静默启动任务");
-        }
-
+        definition.Triggers.Create(8);
         dynamic action = definition.Actions.Create(0);
-        action.Path = host;
-        action.Arguments = "RunKernel \"" + kernelExe + "\"";
+        action.Path = kernelExe;
+        action.Arguments = KernelArgs;
         action.WorkingDirectory = Path.GetDirectoryName(kernelExe) ?? "";
-        definition.Settings.Hidden = true;
 
-        definition.Principal.UserId = user;
-        definition.Principal.LogonType = 3;
-        definition.Principal.RunLevel = 0;
+        definition.Principal.UserId = "S-1-5-18";
+        definition.Principal.LogonType = 5;
+        definition.Principal.RunLevel = 1;
+        definition.Settings.Hidden = true;
         definition.Settings.DisallowStartIfOnBatteries = false;
         definition.Settings.StopIfGoingOnBatteries = false;
         definition.Settings.AllowDemandStart = true;
@@ -706,12 +935,12 @@ internal static class MihomoService
 
         try
         {
-            folder.RegisterTaskDefinition(DefaultTaskName, definition, 2, user, null, 3);
+            folder.RegisterTaskDefinition(DefaultTaskName, definition, 2, null, null, 5);
         }
         catch (Exception ex)
         {
             throw new InvalidOperationException(
-                "无法创建当前用户计划任务。若已存在系统级任务 " + DefaultTaskName + "，请先删除后再添加。" +
+                "无法创建 SYSTEM 计划任务。若已存在同名任务 " + DefaultTaskName + "，请先删除后再添加。" +
                 Environment.NewLine + ex.Message);
         }
     }
@@ -788,7 +1017,7 @@ internal static class MihomoService
                 "任务: " + existing.FullName + Environment.NewLine +
                 "内核: " + existing.KernelPath + Environment.NewLine + Environment.NewLine +
                 "确认删除？",
-                "Mihomo",
+                "Mihomo Helper",
                 NativeMethods.MessageBoxYesNo | NativeMethods.MessageBoxWarning);
             if (answer != NativeMethods.IdYes)
             {

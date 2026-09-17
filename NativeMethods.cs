@@ -110,11 +110,11 @@ internal static class NativeDialog
 {
     public static void Info(string message)
     {
-        NativeMethods.MessageBox(IntPtr.Zero, message, "Mihomo", NativeMethods.MessageBoxInfo);
+        NativeMethods.MessageBox(IntPtr.Zero, message, "Mihomo Helper", NativeMethods.MessageBoxInfo);
     }
 
     public static void Error(string message)
     {
-        NativeMethods.MessageBox(IntPtr.Zero, message, "Mihomo", NativeMethods.MessageBoxError);
+        NativeMethods.MessageBox(IntPtr.Zero, message, "Mihomo Helper", NativeMethods.MessageBoxError);
     }
 }
