@@ -1,0 +1,341 @@
+proxy-providers: 
+  ZJ:
+    url: 'https://substore.vercel.app'
+    path: './proxy-providers/ZJ.yaml'
+    type: http
+    interval: 86400
+    health-check: 
+      enable: true
+      lazy: true
+      url: http://latency-test.skk.moe/endpoint
+      interval: 60
+
+  Airport1:
+    url: 'https://substore.vercel.app'
+    path: './proxy-providers/aitport1.yaml'
+    type: http
+    interval: 86400
+    health-check: 
+      enable: true
+      lazy: true
+      url: http://latency-test.skk.moe/endpoint
+      interval: 60
+
+
+port: 7891
+socks-port: 7892
+mixed-port: 7890
+unified-delay: true
+tcp-concurrent: true
+allow-lan: true
+mode: rule
+log-level: info
+ipv6: true
+udp: true
+profile:
+  store-selected: true
+  store-fake-ip: true
+find-process-mode: strict
+global-client-fingerprint: chrome
+geodata-mode: true
+geodata-loader: standard
+geo-auto-update: true
+geo-update-interval: 24
+geox-url:
+  geoip: https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip-lite.dat
+  geosite: https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat
+  mmdb: https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/country-lite.mmdb
+  asn: https://github.com/xishang0128/geoip/releases/download/latest/GeoLite2-ASN.mmdb
+external-controller: 127.0.0.1:9090
+secret: 123456
+external-ui: ui
+external-ui-name: zashboard
+external-ui-url: https://github.com/Zephyruso/zashboard/releases/latest/download/dist.zip
+sniffer:
+  enable: true
+  force-dns-mapping: true
+  parse-pure-ip: true
+  override-destination: true
+  sniff:
+    HTTP:
+      ports:
+        - 80
+        - 8080-8880
+      override-destination: true
+    TLS:
+      ports:
+        - 443
+        - 8443
+    QUIC:
+      ports:
+        - 443
+        - 8443
+  force-domain:
+    - +.v2ex.com
+  skip-domain:
+    - Mijia Cloud
+    - +.push.apple.com
+  skip-src-address:
+    - 192.168.1.1/24
+  skip-dst-address:
+    - 91.105.192.0/23
+    - 91.108.4.0/22
+    - 91.108.8.0/21
+    - 91.108.16.0/21
+    - 91.108.56.0/22
+    - 95.161.64.0/20
+    - 149.154.160.0/20
+    - 185.76.151.0/24
+    - 2001:67c:4e8::/48
+    - 2001:b28:f23c::/47
+    - 2001:b28:f23f::/48
+    - 2a0a:f280:203::/48
+tun:
+  enable: false
+  stack: mixed
+  device: utun0
+  dns-hijack:
+    - any:53
+    - tcp://any:53
+  auto-route: true
+  auto-detect-interface: true
+  strict-route: true
+dns:
+  enable: true
+  listen: 0.0.0.0:1053
+  ipv6: true
+  prefer-h3: true
+  use-hosts: true
+  use-system-hosts: true
+  respect-rules: true
+  enhanced-mode: fake-ip
+  fake-ip-range: 28.0.0.1/8
+  fake-ip-filter:
+    - 'rule-set:fake_ip_filter'
+  default-nameserver:
+    - 223.5.5.5
+    - 119.29.29.29
+  nameserver:
+    - https://120.53.53.53/dns-query#h3=true
+    - https://223.6.6.6/dns-query#h3=true
+    - https://223.5.5.5/dns-query#h3=true
+  proxy-server-nameserver:
+    - https://120.53.53.53/dns-query
+    - https://223.5.5.5/dns-query
+
+FilterHK: &FilterHK '(?=.*(🇭🇰|港|HK|(?i)Hong))^((?!(日|坡|狮|美)).)*$'
+FilterJP: &FilterJP '(?=.*(🇯🇵|(?<!尼)日|JP|(?i)Japan))^((?!(港|坡|狮|美)).)*$'
+FilterSG: &FilterSG '(?=.*(🇸🇬|坡|狮|獅|SG|(?i)Singapore))^((?!(港|日|美)).)*$'
+FilterUS: &FilterUS '(?=.*(🇺🇸|美|US|(?i)States|American))^((?!(港|日|坡|狮)).)*$'
+FilterOther: &FilterOther '^((?!(🇭🇰|🇸🇬|🇺🇸|🇯🇵|港|美|日|坡|狮|广告|剩余|官网|到期|流量|HK|US|JP|SG|Hong|Singapore|Japan|United)).)*$'
+# FilterAll: &FilterAll '^(?=.*(.))(?!.*((?i)群|邀请|返利|循环|官网|客服|网站|网址|获取|订阅|流量|到期|机场|下次|版本|官址|备用|过期|已用|联系|邮箱|工单|贩卖|通知|倒卖|防止|国内|地址|频道|无法|说明|使用|提示|特别|访问|支持|教程|关注|更新|作者|加入|(\b(USE|USED|TOTAL|EXPIRE|EMAIL|Panel|Channel|Author)\b|(\d{4}-\d{2}-\d{2}|\d+G)))).*$'
+
+
+Select: &select
+  type: select
+  disable-udp: false
+  hidden: false
+UrlTest: &urltest
+  type: url-test
+  interval: 6
+  tolerance: 20
+  lazy: true
+  url: http://latency-test.skk.moe/endpoint
+  disable-udp: false
+  timeout: 2000
+  max-failed-times: 3
+  hidden: false
+FallBack: &fallback
+  type: fallback
+  interval: 6
+  lazy: true
+  url: http://latency-test.skk.moe/endpoint
+  disable-udp: false
+  timeout: 2000
+  max-failed-times: 3
+  hidden: false
+LoadBalance:
+  type: load-balance
+  interval: 6
+  lazy: true
+  url: http://latency-test.skk.moe/endpoint
+  disable-udp: false
+  strategy: consistent-hashing
+  timeout: 2000
+  max-failed-times: 3
+  hidden: false
+
+Classical: &classical
+  type: http
+  behavior: classical
+  interval: 86400
+Domain: &domain
+  type: http
+  behavior: domain
+  interval: 86400
+IP: &ip
+  type: http
+  behavior: ipcidr
+  interval: 86400
+
+proxy-groups:
+  - name: Proxy
+    <<: *select
+    icon: https://raw.githubusercontent.com/Koolson/Qure/master/IconSet/Color/Proxy.png
+    proxies:
+      - Hong Kong
+      - Japan
+      - Singapore
+      - United States
+      - Others
+  - name: AIGC
+    <<: *select
+    icon: https://raw.githubusercontent.com/Orz-3/mini/master/Color/OpenAI.png
+    proxies:
+      - United States
+      - Hong Kong
+      - Japan
+      - Singapore
+      - Others    
+  - name: Netflix
+    <<: *select
+    icon: https://raw.githubusercontent.com/Orz-3/mini/master/Color/Netflix.png
+    proxies:
+      - Singapore
+      - Hong Kong
+      - Japan
+      - United States
+      - Others
+  - name: Spotify
+    <<: *select
+    icon: https://raw.githubusercontent.com/Orz-3/mini/master/Color/Spotify.png
+    proxies:
+      - DIRECT
+      - Hong Kong
+      - Japan
+      - Singapore
+      - United States
+      - Others
+# 地区策略
+  - name: Hong Kong
+    include-all: true
+    <<: *fallback
+    filter: *FilterHK
+    icon: https://raw.githubusercontent.com/Orz-3/mini/master/Color/HK.png
+
+  - name: Japan
+    include-all: true
+    <<: *fallback
+    filter: *FilterJP
+    icon: https://raw.githubusercontent.com/Orz-3/mini/master/Color/JP.png
+
+  - name: Singapore
+    include-all: true
+    <<: *fallback
+    filter: *FilterSG
+    icon: https://raw.githubusercontent.com/Orz-3/mini/master/Color/SG.png
+
+  - name: United States
+    include-all: true
+    <<: *fallback
+    filter: *FilterUS
+    icon: https://raw.githubusercontent.com/Orz-3/mini/master/Color/US.png
+
+  - name: Others
+    include-all: true
+    <<: *select
+    filter: *FilterOther
+    icon: https://raw.githubusercontent.com/Koolson/Qure/master/IconSet/Color/World_Map.png
+
+
+
+rule-providers:
+  awavenue:
+    <<: *domain
+    format: yaml
+    path: ./rule-providers/awavenue.yaml
+    url: https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/Filters/AWAvenue-Ads-Rule-Clash.yaml
+  fake_ip_filter:
+    <<: *domain
+    format: text
+    path: ./rule-providers/fake_ip_filter.list
+    url: https://cdn.jsdelivr.net/gh/juewuy/ShellCrash@dev/public/fake_ip_filter.list
+  applications:
+    <<: *classical
+    format: text
+    path: ./rule-providers/direct.txt
+    url: https://ruleset.skk.moe/Clash/non_ip/direct.txt
+  global_non_ip:
+    <<: *classical
+    format: text
+    path: ./rule-providers/global_non_ip.txt
+    url: https://ruleset.skk.moe/Clash/non_ip/global.txt
+  cdn_domainset:
+    <<: *domain
+    format: text
+    path: ./rule-providers/cdn_domainset.txt
+    url: https://ruleset.skk.moe/Clash/domainset/cdn.txt
+  cdn_non_ip:
+    <<: *classical
+    format: text
+    path: ./rule-providers/cdn_non_ip.txt
+    url: https://ruleset.skk.moe/Clash/non_ip/cdn.txt
+  domestic_non_ip:
+    <<: *classical
+    format: text
+    path: ./rule-providers/domestic_non_ip.txt
+    url: https://ruleset.skk.moe/Clash/non_ip/domestic.txt
+  domestic_ip:
+    <<: *classical
+    format: text
+    path: ./rule-providers/domestic_ip.txt
+    url: https://ruleset.skk.moe/Clash/ip/domestic.txt
+  china_ip:
+    <<: *ip
+    format: text
+    path: ./rule-providers/china_ip.txt
+    url: https://ruleset.skk.moe/Clash/ip/china_ip.txt
+  china_ip_ipv6:
+    <<: *ip
+    format: text
+    path: ./rule-providers/china_ip_ipv6.txt
+    url: https://ruleset.skk.moe/Clash/ip/china_ip_ipv6.txt
+
+rules:
+  - RULE-SET,awavenue,REJECT
+  - GEOSITE,private,DIRECT
+  - GEOSITE,category-public-tracker,DIRECT
+  - GEOSITE,category-games@cn,DIRECT
+
+  - GEOSITE,apple@cn,DIRECT
+  - GEOSITE,icloud,DIRECT
+
+  - GEOSITE,microsoft@cn,DIRECT
+  - DOMAIN-SUFFIX,onedrive.live.com,Proxy
+  - GEOSITE,onedrive,DIRECT
+  - GEOSITE,microsoft,Proxy
+
+  - GEOSITE,telegram,Proxy
+  - GEOSITE,category-ai-!cn,AIGC
+
+  - GEOSITE,spotify,Spotify
+  - GEOSITE,netflix,Netflix
+  - GEOSITE,disney,Netflix
+
+  - RULE-SET,cdn_domainset,Proxy
+  - RULE-SET,cdn_non_ip,Proxy
+  - RULE-SET,global_non_ip,Proxy
+
+  - RULE-SET,applications,DIRECT
+  - RULE-SET,domestic_non_ip,DIRECT
+  - DOMAIN-SUFFIX,cn,DIRECT
+
+  # ====== IP =======
+
+  - GEOIP,telegram,Proxy,no-resolve
+  - GEOIP,netflix,Netflix,no-resolve
+  - GEOIP,private,DIRECT,no-resolve
+  - RULE-SET,domestic_ip,DIRECT,no-resolve
+  - RULE-SET,china_ip,DIRECT,no-resolve
+  - RULE-SET,china_ip_ipv6,DIRECT,no-resolve
+  - MATCH,Proxy

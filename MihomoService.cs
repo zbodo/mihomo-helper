@@ -525,6 +525,8 @@ internal static class MihomoService
                 "内核: " + existing.KernelPath);
         }
 
+        EnsureExampleConfig(kernelExe);
+
         Type type = Type.GetTypeFromProgID("Schedule.Service")
             ?? throw new InvalidOperationException("无法访问任务计划程序");
         dynamic service = Activator.CreateInstance(type)!;
@@ -552,6 +554,63 @@ internal static class MihomoService
         definition.Settings.RestartCount = 3;
 
         folder.RegisterTaskDefinition(DefaultTaskName, definition, 2, null, null, 5);
+    }
+
+    private static void EnsureExampleConfig(string kernelExe)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(kernelExe) ||
+                !kernelExe.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            string? kernelDir = Path.GetDirectoryName(kernelExe);
+            if (string.IsNullOrWhiteSpace(kernelDir))
+            {
+                return;
+            }
+
+            string kernelName = Path.GetFileName(kernelExe);
+            string kernelFullPath = Path.GetFullPath(kernelExe);
+            var directory = new DirectoryInfo(kernelDir);
+            FileInfo[] files = directory.GetFiles("*", SearchOption.TopDirectoryOnly);
+
+            bool hasKernel = false;
+            bool hasConfig = false;
+            foreach (FileInfo file in files)
+            {
+                if (file.Name.Equals(kernelName, StringComparison.OrdinalIgnoreCase) &&
+                    PathsEqual(file.FullName, kernelFullPath))
+                {
+                    hasKernel = true;
+                }
+
+                if (file.Name.Equals("config.yaml", StringComparison.OrdinalIgnoreCase) ||
+                    file.Name.Equals("config.yml", StringComparison.OrdinalIgnoreCase))
+                {
+                    hasConfig = true;
+                }
+            }
+
+            if (!hasKernel || hasConfig)
+            {
+                return;
+            }
+
+            string example = Path.Combine(AppContext.BaseDirectory, "Assets", "config.example.yaml");
+            FileInfo exampleFile = new(example);
+            if (!exampleFile.Exists)
+            {
+                return;
+            }
+
+            exampleFile.CopyTo(Path.Combine(directory.FullName, "config.yaml"), false);
+        }
+        catch
+        {
+        }
     }
 
     private static void RemoveTask(bool skipConfirm)
