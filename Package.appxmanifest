@@ -36,7 +36,7 @@
       EntryPoint="$targetentrypoint$">
       <uap:VisualElements
         DisplayName="Mihomo Helper"
-        Description="Windows 上用于裸内核运行 mihomo 的简易窗口工具"
+        Description="Windows 上用于裸内核运行 mihomo 的简易窗口工具，可切换系统代理与 TUN、启停内核、管理开机计划任务，并从配置打开 WebUI。"
         BackgroundColor="transparent"
         Square150x150Logo="Assets\Square150x150Logo.png"
         Square44x44Logo="Assets\Square44x44Logo.png">

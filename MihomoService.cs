@@ -193,6 +193,53 @@ internal static class MihomoService
         }
     }
 
+    public static bool QuerySystemProxyEnabled()
+    {
+        return IsProxyEnabled();
+    }
+
+    public static (bool WebUiReady, bool ProxyEnabled, bool TunEnabled) QueryLiveUiState()
+    {
+        bool proxy = IsProxyEnabled();
+        try
+        {
+            if (!TryLoadRuntimeConfig(out KernelRuntimeConfig cfg))
+            {
+                return (false, proxy, false);
+            }
+
+            using CancellationTokenSource cts = new(TimeSpan.FromSeconds(1));
+            using HttpRequestMessage request = ControllerRequest(HttpMethod.Get, "/configs");
+            using HttpResponseMessage response = Http.Send(request, cts.Token);
+            if (!response.IsSuccessStatusCode)
+            {
+                return (false, proxy, false);
+            }
+
+            string json = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+            bool tun = TryReadTunEnabled(json, out bool enabled) && enabled;
+            return (IsWebUiPageReachable(cfg), proxy, tun);
+        }
+        catch
+        {
+            return (false, proxy, false);
+        }
+    }
+
+    internal static bool TryGetTrafficWebSocketUri(out Uri uri, out string secret)
+    {
+        uri = null!;
+        secret = "";
+        if (!TryLoadRuntimeConfig(out KernelRuntimeConfig cfg))
+        {
+            return false;
+        }
+
+        secret = cfg.Secret;
+        uri = new Uri("ws://127.0.0.1:" + cfg.ControllerPort + "/traffic?token=" + Uri.EscapeDataString(cfg.Secret));
+        return true;
+    }
+
     public static bool TryOpenDashboardFromConfig()
     {
         try

@@ -11,12 +11,12 @@ namespace MihomoTray;
 
 public sealed partial class MainWindow : Window
 {
-    private const double MinWindowWidthDip = 360;
-    private const double InitialWindowWidthDip = 400;
-    private const double MaxWindowWidthDip = 520;
+    private const double MinWindowWidthDip = 400;
 
-    private readonly DispatcherTimer _webUiTimer = new() { Interval = TimeSpan.FromSeconds(2) };
+    private readonly MihomoApiMonitor _apiMonitor;
     private bool _adjustingSize;
+    private bool _sizeInitialized;
+    private int _minClientHeight;
     private bool _proxyEnabledOnce;
     private bool _webUiChecking;
     private string? _uuidKernelPath;
@@ -37,18 +37,18 @@ public sealed partial class MainWindow : Window
 
         MihomoService.SetActiveKernelPath(GetDisplayedKernelPath());
         WebUiButton.IsEnabled = false;
-        _webUiTimer.Tick += OnWebUiTimerTick;
-        Closed += (_, _) => _webUiTimer.Stop();
+        _apiMonitor = new MihomoApiMonitor(OnApiLiveChanged);
+        Closed += (_, _) => _apiMonitor.Stop();
 
+        ApplyDefaultClientSize();
         FrameworkElement root = (FrameworkElement)Content;
         root.Loaded += OnRootLoaded;
-        root.SizeChanged += OnRootSizeChanged;
     }
 
     private async void OnRootLoaded(object sender, RoutedEventArgs e)
     {
         ((FrameworkElement)Content).Loaded -= OnRootLoaded;
-        FitHeightToContent(center: true, initialWidth: true);
+        ApplyWindowSize(center: true, applyDefault: true);
         Activate();
         await InitializeStartupAsync();
     }
@@ -69,15 +69,15 @@ public sealed partial class MainWindow : Window
             MihomoService.SetActiveKernelPath(GetDisplayedKernelPath());
             await Task.Run(MihomoService.TryPrepareRuntimeConfig);
             SetConfigDependentEnabled(true);
-            await RefreshWebUiButtonAsync();
-            _webUiTimer.Start();
+            _apiMonitor.Start();
+            await RefreshModeButtonsAsync();
             await MaybeEnableProxyAsync();
             await RefreshStatusAsync();
         }
         catch
         {
             SetConfigDependentEnabled(true);
-            _webUiTimer.Start();
+            _apiMonitor.Start();
             await RefreshModeButtonsAsync();
         }
     }
@@ -89,11 +89,6 @@ public sealed partial class MainWindow : Window
         if (!enabled)
         {
             ApplyModeButtons(proxyOn: false, tunOn: false);
-        }
-
-        if (ContentPanel.IsLoaded)
-        {
-            FitHeightToContent(center: false, initialWidth: false);
         }
     }
 
@@ -115,10 +110,30 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async void OnWebUiTimerTick(object? sender, object e)
+    private void OnApiLiveChanged(bool live)
     {
-        await RefreshWebUiButtonAsync();
-        await RefreshModeButtonsAsync();
+        DispatcherQueue.TryEnqueue(() => _ = HandleApiLiveChangedAsync(live));
+    }
+
+    private async Task HandleApiLiveChangedAsync(bool live)
+    {
+        if (!live)
+        {
+            WebUiButton.IsEnabled = false;
+            bool proxy = false;
+            try
+            {
+                proxy = await Task.Run(MihomoService.QuerySystemProxyEnabled);
+            }
+            catch
+            {
+            }
+
+            ApplyModeButtons(proxy, tunOn: false);
+            return;
+        }
+
+        await RefreshLiveButtonsAsync();
     }
 
     private async Task RefreshWebUiButtonAsync()
@@ -133,6 +148,31 @@ public sealed partial class MainWindow : Window
         {
             MihomoService.SetActiveKernelPath(GetDisplayedKernelPath());
             WebUiButton.IsEnabled = await Task.Run(MihomoService.TryValidateWebUiConfig);
+        }
+        catch
+        {
+            WebUiButton.IsEnabled = false;
+        }
+        finally
+        {
+            _webUiChecking = false;
+        }
+    }
+
+    private async Task RefreshLiveButtonsAsync()
+    {
+        if (_webUiChecking)
+        {
+            return;
+        }
+
+        _webUiChecking = true;
+        try
+        {
+            MihomoService.SetActiveKernelPath(GetDisplayedKernelPath());
+            var state = await Task.Run(MihomoService.QueryLiveUiState);
+            WebUiButton.IsEnabled = state.WebUiReady;
+            ApplyModeButtons(state.ProxyEnabled, state.TunEnabled);
         }
         catch
         {
@@ -172,17 +212,14 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void OnRootSizeChanged(object sender, SizeChangedEventArgs e)
+    private void ApplyDefaultClientSize()
     {
-        if (_adjustingSize || Math.Abs(e.NewSize.Width - e.PreviousSize.Width) < 0.5)
-        {
-            return;
-        }
-
-        FitHeightToContent(center: false, initialWidth: false);
+        (int minWidth, int minHeight) = MeasureMinClientSize();
+        ApplyMinSizeConstraints(minWidth, minHeight);
+        AppWindow.ResizeClient(new SizeInt32(minWidth, minHeight));
     }
 
-    private void FitHeightToContent(bool center, bool initialWidth)
+    private void ApplyWindowSize(bool center, bool applyDefault)
     {
         if (_adjustingSize)
         {
@@ -192,45 +229,24 @@ public sealed partial class MainWindow : Window
         _adjustingSize = true;
         try
         {
-            FrameworkElement root = (FrameworkElement)Content;
-            double scale = root.XamlRoot?.RasterizationScale ?? 1;
-            DisplayArea display = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Nearest);
-            RectInt32 work = display.WorkArea;
-
-            int minWidth = (int)Math.Ceiling(MinWindowWidthDip * scale);
-            int maxWidth = Math.Min((int)Math.Ceiling(MaxWindowWidthDip * scale), Math.Max(minWidth, work.Width - 48));
-            double measureWidth = initialWidth || ContentPanel.ActualWidth < 1
-                ? InitialWindowWidthDip
-                : Math.Clamp(ContentPanel.ActualWidth, MinWindowWidthDip, MaxWindowWidthDip);
-            ContentPanel.Measure(new Size(measureWidth, double.PositiveInfinity));
-            double titleHeight = AppTitleBar.ActualHeight > 1 ? AppTitleBar.ActualHeight : 48;
-            double contentHeight = ContentPanel.DesiredSize.Height;
-            int clientHeight = Math.Clamp((int)Math.Ceiling((titleHeight + contentHeight) * scale), 240, work.Height - 48);
-            int clientWidth = initialWidth
-                ? (int)Math.Ceiling(InitialWindowWidthDip * scale)
-                : Math.Clamp(AppWindow.ClientSize.Width, minWidth, maxWidth);
-            clientWidth = Math.Clamp(clientWidth, minWidth, maxWidth);
-
-            if (AppWindow.Presenter is OverlappedPresenter presenter)
+            (int minWidth, int minHeight) = MeasureMinClientSize();
+            if (!_sizeInitialized)
             {
-                presenter.IsMaximizable = false;
-                presenter.PreferredMinimumWidth = minWidth;
-                presenter.PreferredMaximumWidth = maxWidth;
-                presenter.PreferredMaximumHeight = work.Height;
+                _minClientHeight = minHeight;
             }
 
-            AppWindow.ResizeClient(new SizeInt32(clientWidth, clientHeight));
-
-            if (AppWindow.Presenter is OverlappedPresenter locked)
+            ApplyMinSizeConstraints(minWidth, _minClientHeight);
+            if (applyDefault && !_sizeInitialized)
             {
-                locked.PreferredMinimumWidth = minWidth;
-                locked.PreferredMaximumWidth = maxWidth;
-                locked.PreferredMinimumHeight = AppWindow.Size.Height;
-                locked.PreferredMaximumHeight = AppWindow.Size.Height;
+                AppWindow.ResizeClient(new SizeInt32(minWidth, _minClientHeight));
+                ApplyMinSizeConstraints(minWidth, _minClientHeight);
             }
 
+            _sizeInitialized = true;
             if (center)
             {
+                DisplayArea display = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Nearest);
+                RectInt32 work = display.WorkArea;
                 SizeInt32 size = AppWindow.Size;
                 AppWindow.Move(new PointInt32(
                     work.X + (work.Width - size.Width) / 2,
@@ -241,6 +257,39 @@ public sealed partial class MainWindow : Window
         {
             _adjustingSize = false;
         }
+    }
+
+    private (int Width, int Height) MeasureMinClientSize()
+    {
+        double scale = GetScale();
+        int minWidth = (int)Math.Ceiling(MinWindowWidthDip * scale);
+        ContentPanel.Measure(new Size(MinWindowWidthDip, double.PositiveInfinity));
+        double titleHeight = AppTitleBar.ActualHeight > 1 ? AppTitleBar.ActualHeight : 48;
+        int minHeight = Math.Max((int)Math.Ceiling((titleHeight + ContentPanel.DesiredSize.Height) * scale), 240);
+        return (minWidth, minHeight);
+    }
+
+    private void ApplyMinSizeConstraints(int minClientWidth, int minClientHeight)
+    {
+        if (AppWindow.Presenter is not OverlappedPresenter presenter)
+        {
+            return;
+        }
+
+        int frameHeight = Math.Max(0, AppWindow.Size.Height - AppWindow.ClientSize.Height);
+        presenter.PreferredMinimumWidth = minClientWidth;
+        presenter.PreferredMinimumHeight = minClientHeight + frameHeight;
+    }
+
+    private double GetScale()
+    {
+        if (Content is FrameworkElement root && root.XamlRoot is { RasterizationScale: > 0 } xaml)
+        {
+            return xaml.RasterizationScale;
+        }
+
+        uint dpi = NativeMethods.GetDpiForWindow(WindowNative.GetWindowHandle(this));
+        return dpi > 0 ? dpi / 96.0 : 1;
     }
 
     private void PersistKernelPath()
@@ -273,10 +322,6 @@ public sealed partial class MainWindow : Window
         ApplyModeButtons(
             string.Equals(status.Proxy, "启用", StringComparison.Ordinal),
             string.Equals(status.Tun, "启用", StringComparison.Ordinal));
-        if (ContentPanel.IsLoaded)
-        {
-            FitHeightToContent(center: false, initialWidth: false);
-        }
     }
 
     private async Task RefreshModeButtonsAsync()
@@ -339,17 +384,23 @@ public sealed partial class MainWindow : Window
             KernelStatusText.Text = "处理中...";
             string? path = needsPath ? GetDisplayedKernelPath() : null;
             await Task.Run(() => MihomoService.Run(action, path, skipConfirm));
+            _apiMonitor.RetryNowIfDisconnected();
             await RefreshUuidKernelAsync();
             await RefreshStatusAsync();
+            await RefreshWebUiButtonAsync();
         }
         catch (OperationCanceledException)
         {
+            _apiMonitor.RetryNowIfDisconnected();
             await RefreshStatusAsync();
+            await RefreshWebUiButtonAsync();
         }
         catch (Exception ex)
         {
             KernelStatusText.Text = ex.Message;
+            _apiMonitor.RetryNowIfDisconnected();
             await RefreshModeButtonsAsync();
+            await RefreshWebUiButtonAsync();
         }
     }
 
@@ -381,6 +432,7 @@ public sealed partial class MainWindow : Window
         MihomoService.SaveKernelPath(file.Path);
         MihomoService.SetActiveKernelPath(file.Path);
         await RefreshStatusAsync();
+        await RefreshWebUiButtonAsync();
     }
 
     private async Task<bool> ConfirmAsync(string title, string content, string primary)
@@ -471,5 +523,6 @@ public sealed partial class MainWindow : Window
         PersistKernelPath();
         await RefreshUuidKernelAsync();
         await RefreshStatusAsync();
+        await RefreshWebUiButtonAsync();
     }
 }

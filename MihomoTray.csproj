@@ -7,6 +7,7 @@
     <AssemblyName>MihomoHelper</AssemblyName>
     <Product>Mihomo Helper</Product>
     <AssemblyTitle>Mihomo Helper</AssemblyTitle>
+    <Description>Windows 上用于裸内核运行 mihomo 的简易窗口工具，可切换系统代理与 TUN、启停内核、管理开机计划任务，并从配置打开 WebUI。</Description>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
     <Platforms>x64</Platforms>

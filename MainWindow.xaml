@@ -11,7 +11,7 @@
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
         <TitleBar x:Name="AppTitleBar" Title="Mihomo Helper">
@@ -21,22 +21,32 @@
         </TitleBar>
 
         <ScrollViewer
+            x:Name="ContentScroll"
             Grid.Row="1"
             HorizontalAlignment="Stretch"
+            VerticalAlignment="Stretch"
+            HorizontalScrollBarVisibility="Disabled"
             VerticalScrollBarVisibility="Auto">
-            <StackPanel
+            <Grid
                 x:Name="ContentPanel"
                 MinWidth="360"
-                MaxWidth="520"
+                HorizontalAlignment="Stretch"
                 Padding="20,4,20,20"
-                Spacing="16">
+                RowSpacing="16">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
                 <Border
                     Padding="16"
                     Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                     BorderThickness="1"
                     CornerRadius="8">
-                    <Grid ColumnSpacing="16" RowSpacing="8">
+                    <Grid
+                        MinHeight="136"
+                        ColumnSpacing="16"
+                        RowSpacing="8">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="*" />
@@ -46,117 +56,148 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
-                        <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="系统代理" />
-                        <TextBlock x:Name="ProxyStatusText" Grid.Column="1" FontWeight="SemiBold" />
+                        <TextBlock
+                            VerticalAlignment="Top"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            LineHeight="20"
+                            LineStackingStrategy="BlockLineHeight"
+                            Text="系统代理" />
+                        <TextBlock
+                            x:Name="ProxyStatusText"
+                            Grid.Column="1"
+                            VerticalAlignment="Top"
+                            FontWeight="SemiBold"
+                            LineHeight="20"
+                            LineStackingStrategy="BlockLineHeight"
+                            TextWrapping="Wrap" />
                         <TextBlock
                             Grid.Row="1"
+                            VerticalAlignment="Top"
                             Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            LineHeight="20"
+                            LineStackingStrategy="BlockLineHeight"
                             Text="TUN" />
-                        <TextBlock x:Name="TunStatusText" Grid.Row="1" Grid.Column="1" FontWeight="SemiBold" />
+                        <TextBlock
+                            x:Name="TunStatusText"
+                            Grid.Row="1"
+                            Grid.Column="1"
+                            VerticalAlignment="Top"
+                            FontWeight="SemiBold"
+                            LineHeight="20"
+                            LineStackingStrategy="BlockLineHeight"
+                            TextWrapping="Wrap" />
                         <TextBlock
                             Grid.Row="2"
+                            VerticalAlignment="Top"
                             Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            LineHeight="20"
+                            LineStackingStrategy="BlockLineHeight"
                             Text="内核" />
                         <TextBlock
                             x:Name="KernelStatusText"
                             Grid.Row="2"
                             Grid.Column="1"
+                            VerticalAlignment="Top"
+                            LineHeight="20"
+                            LineStackingStrategy="BlockLineHeight"
                             TextTrimming="CharacterEllipsis"
                             TextWrapping="Wrap" />
                     </Grid>
                 </Border>
 
-                <ContentControl
-                    x:Name="KernelPathPanel"
-                    HorizontalAlignment="Stretch"
-                    HorizontalContentAlignment="Stretch"
-                    IsEnabled="False">
+                <StackPanel Grid.Row="1" Spacing="16">
+                    <ContentControl
+                        x:Name="KernelPathPanel"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Stretch"
+                        IsEnabled="False">
+                        <StackPanel Spacing="8">
+                            <TextBlock Style="{StaticResource CaptionTextBlockStyle}" Text="内核路径" />
+                            <Grid ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBox
+                                    x:Name="KernelPathBox"
+                                    PlaceholderText="选择或粘贴 mihomo 内核 exe" />
+                                <Button
+                                    Grid.Column="1"
+                                    Click="OnBrowseKernel"
+                                    Content="浏览" />
+                                <Button
+                                    Grid.Column="2"
+                                    Click="OnOpenKernelPath"
+                                    Content="打开" />
+                            </Grid>
+                        </StackPanel>
+                    </ContentControl>
+
                     <StackPanel Spacing="8">
-                        <TextBlock Style="{StaticResource CaptionTextBlockStyle}" Text="内核路径" />
+                        <TextBlock Style="{StaticResource CaptionTextBlockStyle}" Text="工作模式" />
                         <Grid ColumnSpacing="8">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
-                            <TextBox
-                                x:Name="KernelPathBox"
-                                PlaceholderText="选择或粘贴 mihomo 内核 exe" />
+                            <Button
+                                x:Name="ProxyToggleButton"
+                                HorizontalAlignment="Stretch"
+                                Click="OnToggleProxy"
+                                IsEnabled="False"
+                                Content="切换系统代理" />
+                            <Button
+                                x:Name="TunToggleButton"
+                                Grid.Column="1"
+                                HorizontalAlignment="Stretch"
+                                Click="OnToggleTun"
+                                IsEnabled="False"
+                                Content="切换 TUN" />
+                        </Grid>
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Button
+                                x:Name="WebUiButton"
+                                HorizontalAlignment="Stretch"
+                                Click="OnOpenWebUi"
+                                IsEnabled="False"
+                                Content="启动 WEBUI" />
                             <Button
                                 Grid.Column="1"
-                                Click="OnBrowseKernel"
-                                Content="浏览" />
+                                HorizontalAlignment="Stretch"
+                                Click="OnStartKernel"
+                                Content="启动内核" />
                             <Button
                                 Grid.Column="2"
-                                Click="OnOpenKernelPath"
-                                Content="打开" />
+                                HorizontalAlignment="Stretch"
+                                Click="OnStopKernel"
+                                Content="终止内核" />
                         </Grid>
                     </StackPanel>
-                </ContentControl>
 
-                <StackPanel Spacing="8">
-                    <TextBlock Style="{StaticResource CaptionTextBlockStyle}" Text="工作模式" />
-                    <Grid ColumnSpacing="8">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <Button
-                            x:Name="ProxyToggleButton"
-                            HorizontalAlignment="Stretch"
-                            Click="OnToggleProxy"
-                            IsEnabled="False"
-                            Content="切换系统代理" />
-                        <Button
-                            x:Name="TunToggleButton"
-                            Grid.Column="1"
-                            HorizontalAlignment="Stretch"
-                            Click="OnToggleTun"
-                            IsEnabled="False"
-                            Content="切换 TUN" />
-                    </Grid>
-                    <Grid ColumnSpacing="8">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <Button
-                            x:Name="WebUiButton"
-                            HorizontalAlignment="Stretch"
-                            Click="OnOpenWebUi"
-                            IsEnabled="False"
-                            Content="启动 WEBUI" />
-                        <Button
-                            Grid.Column="1"
-                            HorizontalAlignment="Stretch"
-                            Click="OnStartKernel"
-                            Content="启动内核" />
-                        <Button
-                            Grid.Column="2"
-                            HorizontalAlignment="Stretch"
-                            Click="OnStopKernel"
-                            Content="终止内核" />
-                    </Grid>
+                    <StackPanel Spacing="8">
+                        <TextBlock Style="{StaticResource CaptionTextBlockStyle}" Text="计划任务" />
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Button HorizontalAlignment="Stretch" Click="OnInstallTask" Content="添加任务" />
+                            <Button Grid.Column="1" HorizontalAlignment="Stretch" Click="OnRemoveTask" Content="删除任务" />
+                        </Grid>
+                    </StackPanel>
+
+                    <HyperlinkButton
+                        HorizontalAlignment="Left"
+                        Click="OnRefresh"
+                        Content="刷新状态" />
                 </StackPanel>
-
-                <StackPanel Spacing="8">
-                    <TextBlock Style="{StaticResource CaptionTextBlockStyle}" Text="计划任务" />
-                    <Grid ColumnSpacing="8">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <Button HorizontalAlignment="Stretch" Click="OnInstallTask" Content="添加任务" />
-                        <Button Grid.Column="1" HorizontalAlignment="Stretch" Click="OnRemoveTask" Content="删除任务" />
-                    </Grid>
-                </StackPanel>
-
-                <HyperlinkButton
-                    HorizontalAlignment="Left"
-                    Click="OnRefresh"
-                    Content="刷新状态" />
-            </StackPanel>
+            </Grid>
         </ScrollViewer>
     </Grid>
 </Window>

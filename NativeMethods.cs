@@ -45,6 +45,9 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     public static extern bool DestroyWindow(IntPtr hWnd);
 
+    [DllImport("user32.dll")]
+    public static extern uint GetDpiForWindow(IntPtr hWnd);
+
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     public static extern ushort RegisterClass(ref WndClass lpWndClass);
 
